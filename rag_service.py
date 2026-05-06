@@ -1,8 +1,3 @@
-"""
-RAG service: builds and queries a ChromaDB vector store over transcripts.
-Falls back to keyword search when no real transcript data exists.
-"""
-
 import os
 import sqlite3
 import re

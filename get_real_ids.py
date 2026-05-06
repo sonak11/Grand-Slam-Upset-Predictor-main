@@ -1,17 +1,4 @@
-"""
-
-Crawls asapsports.com to find REAL event IDs for Grand Slam tournaments,
-then automatically patches scraping.py with the correct IDs.
-
-Run this ONCE before running scraping.py:
-    python get_real_ids.py
-
-It will:
-  1. Fetch the ASAP Sports events listing pages
-  2. Find all Grand Slam event links
-  3. Print the real IDs it found
-  4. Rewrite the ASAP_EVENT_IDS dict in scraping.py with real IDs
-"""
+#import everything 
 
 import re
 import time
@@ -125,10 +112,8 @@ def crawl_events_page(url: str) -> dict:
 
 
 def discover_ids() -> dict:
-    """
-    Try multiple ASAP Sports URL patterns to find Grand Slam event IDs.
-    Returns the best combined results.
-    """
+   
+ 
     all_found = {}
 
     # approach 1: Year-by-year event listing pages 
@@ -179,10 +164,8 @@ def discover_ids() -> dict:
 
 
 def patch_scraping_py(real_ids: dict) -> None:
-    """
-    Rewrite the ASAP_EVENT_IDS dict in scraping.py with real IDs.
-    Only includes the Grand Slam events (not other tournaments).
-    """
+    #rewite the ASAP event_IDS  dict in scraping.py with real IDs. and only includes GS events and not other tournaments 
+
     if not real_ids:
         print("\n⚠️  No real IDs found to patch into scraping.py")
         return
@@ -230,7 +213,7 @@ def patch_scraping_py(real_ids: dict) -> None:
 
 
 def manual_fallback_instructions(found: dict) -> None:
-    """Print manual instructions if auto-discovery didn't work well."""
+  
     slams    = ["Australian Open", "Roland Garros", "Wimbledon", "US Open"]
     missing  = [
         f"{slam} {year}"
@@ -246,15 +229,15 @@ def manual_fallback_instructions(found: dict) -> None:
         print(f"    • {m}")
 
     print("""
-To find them manually (takes ~5 minutes):
+to find  manually:
   1. Go to https://www.asapsports.com
-  2. In the search box, type e.g. "Australian Open 2023"
-  3. Click the result — the URL will show:
+  2. in the search box, type e.g. "Australian Open 2023"
+  3. click the result — the URL will show:
        show_event.php?id=XXXXX
-  4. Copy that number into real_event_ids.json like:
+  4. copy that number into real_event_ids.json like:
        "Australian Open 2023": 163421
 
-  Then run:
+  then run:
        python get_real_ids.py --patch-only
 """)
 
@@ -270,7 +253,7 @@ def main():
                 real_ids = json.load(f)
             print(f"Loaded {len(real_ids)} IDs from {OUTPUT_JSON}")
         except FileNotFoundError:
-            print(f"❌  {OUTPUT_JSON} not found. Run without --patch-only first.")
+            print(f"  {OUTPUT_JSON} not found. Run without --patch-only first.")
             return
     else:
         print("=" * 55)
@@ -288,7 +271,7 @@ def main():
                 print(f"  {k:<30} → {v}")
         else:
             print("""
-  ❌  Found 0 events automatically.
+    Found 0 events automatically.
   
   ASAP Sports may require JavaScript or has changed their layout.
   Use the manual method below, then run:

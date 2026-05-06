@@ -1,13 +1,3 @@
-"""
-Prediction service: loads the trained model and computes SHAP values for a single match input.
-
-Updated to use the new CTFI column names (`ctfi_minutes`, `ctfi_sets`,
-`ctfi_diff_minutes`, `ctfi_diff_sets`) while remaining backward-compatible
-with the legacy `ctfi` column.
-
-Falls back to a lightweight synthetic model when no .pkl exists.
-"""
-
 import os
 import numpy as np
 import pandas as pd
@@ -96,12 +86,12 @@ def _build_row(player_rank, opp_rank, ctfi_minutes,
         "is_underdog":       int(player_rank > opp_rank),
         "round_num":         round_num,
         "best_of":           best_of,
-        # New CTFI columns (canonical)
+        # new CTFI columns (canonical)
         "ctfi_minutes":      ctfi_minutes,
         "ctfi_sets":         ctfi_minutes / 50.0,
         "ctfi_diff_minutes": ctfi_diff_minutes,
         "ctfi_diff_sets":    ctfi_diff_minutes / 50.0,
-        # Legacy column (in case old model expects it)
+        # legacy column (in case old model expects it)
         "ctfi":              ctfi_minutes,
         # NLP features
         "sentiment_polarity":   sentiment_polarity,

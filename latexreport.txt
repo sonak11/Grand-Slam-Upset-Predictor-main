@@ -1,0 +1,651 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage[top=0.80in,bottom=0.80in,left=0.82in,right=0.82in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs,array,multirow,longtable}
+\usepackage{hyperref,url,graphicx,caption,subcaption}
+\usepackage{listings,enumitem}
+\usepackage[disable]{microtype}
+\usepackage{fancyhdr,titlesec,float,mdframed,parskip,setspace}
+
+\setlength{\parskip}{4pt}\setlength{\parindent}{0pt}\setstretch{1.08}
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black}
+
+\setlength{\headheight}{14pt}
+\pagestyle{fancy}\fancyhf{}
+\rhead{\small CS 210 Final Report · Spring 2026}
+\lhead{\small Grand Slam Upset Predictor - Sonakshi Sharma}
+\cfoot{\thepage}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{0.7em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\itshape\bfseries}{\thesubsubsection}{0.5em}{}
+\titlespacing{\section}{0pt}{8pt}{3pt}
+\titlespacing{\subsection}{0pt}{5pt}{2pt}
+\titlespacing{\subsubsection}{0pt}{4pt}{2pt}
+
+\captionsetup{font=small,skip=3pt}
+\lstset{basicstyle=\ttfamily\footnotesize,frame=single,breaklines=true,
+        numbers=left,numberstyle=\tiny,numbersep=4pt,
+        keywordstyle=\bfseries,showstringspaces=false,aboveskip=3pt,belowskip=3pt}
+
+\newtheorem{definition}{Definition}
+\newmdenv[linewidth=0.8pt,innerleftmargin=8pt,innerrightmargin=8pt,
+  innertopmargin=5pt,innerbottommargin=5pt]{keybox}
+\setlist[itemize]{itemsep=2pt,topsep=2pt,leftmargin=1.3em}
+\setlist[enumerate]{itemsep=2pt,topsep=2pt,leftmargin=1.4em}
+
+\begin{document}
+
+%% ── Title ──────────────────────────────────────────────────────────────────
+\begin{center}
+{\LARGE\bfseries Grand Slam Upset Predictor}\\[4pt]
+{\large Predicting Tennis Upsets via Cumulative Fatigue Modeling, NLP, and Machine Learning}\\[6pt]
+{\normalsize CS 210 · Data Management for Data Science
+\quad|\quad \textbf{Author:} Sonakshi Sharma 
+\end{center}
+\rule{\textwidth}{0.5pt}\vspace{3pt}
+
+\textbf{Abstract.}
+Grand Slam tennis upsets-lower-ranked players defeating higher-ranked opponents-are systematically under-predicted because every existing model ignores within-tournament fatigue. We introduce the \textbf{Cumulative Tournament Fatigue Index (CTFI)}, computed via ISO-standard SQL window functions over a 3NF relational database, and fuse it with a three-layer NLP pipeline applied to 2,279 scraped press conference transcripts. A four-model nested ablation on \textbf{43,968 player-match observations} (ATP + WTA, 1990-2024) yields two key honest findings: CTFI produces a statistically significant but directionally unfavourable change in predictions ($p\!=\!0.025$, McNemar's; $n_{10}\!=\!92 > n_{01}\!=\!63$), likely because match duration data is missing for many historical rows, leaving CTFI$\,=\,0$ as a noise value. NLP fatigue language, by contrast, is strongly significant and directionally consistent ($p\!<\!0.001$; $n_{01}\!=\!238$, $n_{10}\!=\!136$): what players say in post-match interviews is a genuine predictor of next-match upset vulnerability. The full Random Forest achieves ROC-AUC\,=\,0.664 and PR-AUC\,=\,0.436 on a held-out temporal test set. 
+
+\rule{\textwidth}{0.5pt}\vspace{2pt}
+
+
+\section{Introduction}
+%% =============================================================================
+
+\subsection{The Problem}
+
+Grand Slam tournaments require players to contest up to seven matches over fourteen days. The lower-ranked player wins approximately 30.1\% of the time overall-a rate that climbs substantially in later rounds as more-evenly-matched survivors meet. These upsets reshape draws, generate disproportionate media interest, and confound a \$218 billion global sports betting market. Yet upsets remain severely under-predicted. The failure is structural: every published model uses only pre-tournament, static statistics. A top-5 seed who played four five-set battles and accumulated hundreds of minutes of court time before a quarterfinal receives the \emph{same} upset probability from any existing system as a top-5 seed who won four quick straight sets. The within-tournament physical and cognitive toll is invisible to all prior work. This project corrects that.
+
+\subsection{Novelty: Is This Task Already Done?}
+
+Tennis match prediction is not new-but the gap this project fills is documented and unaddressed. del~Corral \& Prieto-Rodriguez \cite{delCorral2010} (logistic regression, ATP 1994-2008) found ranking differential is the dominant predictor but assumed match independence. Kovalchik \cite{Kovalchik2016} compared 17 systems and confirmed Elo-based models outperform rank-difference approaches-yet \emph{explicitly noted all 17 systems rely exclusively on pre-tournament statistics}. Ning et al.\ \cite{Ning2021} added serve statistics and surface win rates-still static. Sports science documents that within-tournament fatigue measurably degrades serve speed, movement, and recovery \citep{Hornery2007, Reid2016}-but no ML paper has operationalized it.
+
+\begin{keybox}
+\textbf{Gap.} No published model uses within-tournament cumulative fatigue as a predictive feature. This project introduces CTFI as the first formalization. Additionally, no prior work fuses objective database fatigue with subjective NLP fatigue signals from player language; covers both ATP and WTA simultaneously; or uses McNemar's paired testing to validate feature contributions in this domain.
+\end{keybox}
+
+\subsection{CS 210 Course Connections}
+
+\begin{center}\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Course Topic} & \textbf{Script} & \textbf{Technique} \\
+\midrule
+Pandas \& ETL (Wks 3-6)        & \texttt{data\_ingestion.py} & ATP + WTA CSV download, cleaning, coercion \\
+Relational DB Design (Wks 9-10)& \texttt{data\_ingestion.py} & 3NF SQLite, FK constraints, 6 covering indexes \\
+SQL Window Functions (Wk 10)   & \texttt{features.py}        & \texttt{SUM OVER (PARTITION BY\ldots ROWS PRECEDING)} \\
+NLP (Wk 12)                    & \texttt{nlp.py}             & Lexicon, DistilBERT, Mistral-7B zero-shot \\
+Predictive Modeling (Wk 13)    & \texttt{model.py}           & LR + RF, SMOTE-in-fold, temporal split, McNemar's \\
+Clustering (Wk 12)             & \texttt{clustering.py}      & K-Means + PCA, silhouette optimization \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%% =============================================================================
+\section{Data}
+%% =============================================================================
+
+\subsection{Sources, Scale, and Why This Data}
+
+The primary source is Jeff Sackmann's \texttt{tennis\_atp} and \texttt{tennis\_wta} GitHub repositories (MIT license) \cite{Sackmann2023}-72 CSV files downloaded at runtime covering 1990-2024. Each row contains $\sim$50 columns: player rankings, score, match duration in minutes, surface, round, and serve statistics. After filtering to Grand Slam main-draw matches and converting to a player-centric format (one row per player per match), the corpus yields \textbf{43,968 player-match observations} across both tours.
+
+This is the only freely accessible dataset with the specificity required for CTFI computation-the `minutes' column is essential. Alternatives (Tennis Abstract, ATP/WTA official portals) lack WTA equivalence or are paywalled. Betting odds data from Oddsportal exists publicly but was not combined in this iteration; it is a natural extension.
+
+\begin{center}\small
+\begin{tabular}{lrrrr|lr}
+\toprule
+& \textbf{AO} & \textbf{RG} & \textbf{Wimbledon} & \textbf{USO} & \textbf{Statistic} & \textbf{Value}\\
+\midrule
+Matches (raw) & 5,573 & 5,308 & 5,549 & 5,554 & Total player-match obs & 43,968\\
+ATP matches   & 17,552 & & & & Overall upset rate & 30.1\%\\
+WTA matches   & 4,432  & & & & NLP coverage & 25.8\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Is This the Only Data? Augmentation Explored}
+
+Pre-1990 data was tested but introduced noise: missing rankings, non-standardized rating systems, inconsistent round labeling. 1990 is the earliest reliable year. Masters 1000/Premier events were excluded because the 7-round Grand Slam format is the specific calibration context for CTFI; best-of-3 draws accumulate fatigue differently. SMOTE is the primary data augmentation, applied inside each CV fold to synthesize minority-class (upset) examples-addressing class imbalance rather than expanding raw dataset size. The 2,279 transcripts in the database represent available scraped data; approximately 8,000+ transcripts exist on ASAP Sports but scraping all of them takes several hours due to rate limiting-this is the highest-priority expansion.
+
+\subsection{Why SQLite, Not PostgreSQL?}
+
+The proposal specified PostgreSQL. SQLite was chosen for technical reasons, not familiarity: (1) zero-configuration reproducibility-the evaluator runs the pipeline without installing a server; (2) full ISO window-function support since SQLite 3.25.0, identical syntax to PostgreSQL; (3) ACID transactions at this scale (43,968 rows) execute the CTFI window query in under 2 seconds; and (4) the migration to PostgreSQL requires exactly one line change in \texttt{data\_ingestion.py}.
+
+\subsection{Database Schema and Cleaning}
+
+\textbf{Schema (3NF)}: Four tables-\texttt{players} (player\_id PK, name, tour), \texttt{matches} (winner/loser FKs, round, minutes, upset, surface, best\_of, tour), \texttt{rankings} (date, player\_id, rank), \texttt{transcripts} (player\_id, tourney, round, NLP columns)-with six covering indexes for the CTFI window join \&\
+transcript name join.
+
+\textbf{Round normalization (critical bug fixed)}: Sackmann uses two conventions (``R128/R64...'' and ``R1/R2...'') across years. Both map to ordinal [1-7]. Sackmann's \texttt{match\_num} runs \emph{high-to-low} (1\,=\,Final)-sorting by it would reverse CTFI accumulation. This was a silent data bug caught in development.
+
+\textbf{Minutes}: The `minutes' column is missing or zero for $\sim$31\% of pre-2000 rows. CTFI defaults to zero for these rows, which is the primary reason CTFI adds less signal than theoretically expected-this is discussed in Results.
+
+\textbf{NLP imputation}: 74.2\% of rows lack transcripts; missing NLP features receive surface-stratified median imputation (Hard/Clay/Grass medians computed separately, as linguistic fatigue patterns differ by surface).
+
+%% =============================================================================
+\section{Feature Engineering \& Selection}
+%% =============================================================================
+
+\subsection{Why These Features? Selection Rationale}
+
+Features were selected through domain reasoning, prior literature, and empirical correlation analysis-not automated selection. Three groups with explicit justification:
+
+\textbf{Group 1 - Rank-derived}: Prior literature unanimously identifies ranking as the dominant predictor \cite{delCorral2010}. Raw rank is right-skewed (the talent gap between rank 1 and rank 2 is qualitatively larger than between rank 101 and rank 102, even though both differ by one rank point). Four transformations address this: \texttt{log\_rank\_diff} compresses the tail, making top-tier and mid-tier matchups comparable; \texttt{rank\_ratio} captures proportional dominance, which is scale-invariant; \texttt{is\_underdog} encodes the class definition directly as a binary split point; and \texttt{rank\_bin} (top10/top30/top100/outside100) captures qualitative tier jumps where talent gaps are nonlinear.
+
+\textbf{Group 2 - CTFI (objective fatigue)}: Sports science confirms within-tournament fatigue is physiologically real \cite{Hornery2007}. CTFI and \texttt{fatigue\_total} (NLP) are \textbf{fundamentally different}: CTFI is \emph{objective}-it measures what happened to the player's body in documented court time from the database. \texttt{fatigue\_total} is \emph{subjective}-it measures how the player describes their physical state in language. A player can accumulate 500 minutes of court time and speak confidently; another can describe exhaustion after 200 minutes. They capture complementary dimensions of fatigue and are not redundant. The correlation heatmap confirms \texttt{round\_num} and \texttt{ctfi\_minutes} correlate at $r\!\approx\!0.63$, not 1.0-CTFI adds independent information beyond round number. The differential (\texttt{ctfi\_diff}) captures \emph{relative} fatigue between the two players entering a specific match.
+
+\textbf{Group 3 - NLP (subjective fatigue)}: Three layers complement each other: the rule-based lexicon (70+ phrases) is high-precision for explicit fatigue words; DistilBERT captures overall emotional negativity without requiring specific words; and Mistral-7B zero-shot catches indirect fatigue expressions (``I really struggled to move'') that neither simpler method catches.
+
+\textbf{Excluded}: Serve statistics ($>$80\% missing pre-2000-including them would drop $\sim$40\% of training data, sacrificing temporal breadth). Head-to-head win rates (highly correlated with rank differential; leaks for first-time matchups imputed with global mean).
+
+\subsection{CTFI: SQL Implementation}
+
+\begin{definition}[CTFI]
+$\text{CTFI}(p,t,r) = \sum_{k=1}^{r-1} \text{minutes}(p,t,k)$, where $p$ is a player, $t$ a tournament, and $r\in\{1,\ldots,7\}$ the current round ordinal. $\text{CTFI}(p,t,1)=0$ for all first-round entrants.
+\end{definition}
+
+\begin{lstlisting}[language=SQL,caption={CTFI window function in \texttt{features.py}.}]
+SUM(minutes) OVER (
+    PARTITION BY player_id, tourney_id
+    ORDER BY round_num, match_num
+    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+) AS ctfi_minutes
+\end{lstlisting}
+
+\texttt{ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING} sums only prior rounds. A sets-based fallback (\texttt{ctfi\_sets}) is computed identically for rows where minutes is missing; $r=0.91$ between the two validates the fallback.
+
+%% =============================================================================
+\section{Methodology: Model Selection Journey}
+%% =============================================================================
+
+\subsection{Why These Models?}
+
+\textbf{Step 1 - Logistic Regression as baseline}: LR is the natural first model. Its coefficients directly quantify each feature's marginal contribution in log-odds space-making it directly comparable to prior literature (del~Corral used logistic regression) and interpretable to domain experts. If LR performs adequately, no more complex model is needed.
+
+\textbf{Where LR falls short}: LR achieved ROC-AUC\,=\,0.610, the lowest of all four models. Residual analysis shows systematic error by surface and round-patterns LR cannot capture with a single linear boundary. Upset probability is unlikely to be linear in all inputs: the CTFI effect may differ for top-10 players vs.\ mid-ranked players; clay interacts with fatigue differently at round 5 vs.\ round 2. These interactions motivated moving to Random Forest.
+
+\textbf{Step 2 - Why Random Forest, not Decision Tree, SVM, or XGBoost?}
+\begin{itemize}
+  \item \textit{Not a single Decision Tree}: High variance; overfits on this dataset size; no benefit over RF's ensemble averaging.
+  \item \textit{Not SVM}: Produces no calibrated probabilities (critical for PR-AUC and the Streamlit predictor); no SHAP-interpretable importances (essential for hypothesis validation).
+  \item \textit{Not XGBoost/LightGBM}: Would likely score higher in raw performance. However, for this project, \emph{validating the CTFI hypothesis is as important as raw accuracy}. RF's Gini importances are well-understood and cross-validatable against SHAP values. XGBoost feature importances vary across frequency/gain/coverage splits, making them less reliable for hypothesis validation. XGBoost is the natural next step once validation is complete.
+  \item \textit{RF advantages}: Handles nonlinear interactions; robust to outliers in match duration; handles mixed feature types natively; Gini importances validatable against SHAP; ensemble variance reduction.
+\end{itemize}
+
+\textbf{Step 3 - Why a four-model nested ablation?} A single full model answers ``how well can we predict upsets?'' but not ``how much does CTFI specifically contribute?'' The nested design varies exactly one component at a time:
+
+\begin{center}\small
+\begin{tabular}{lcccl}
+\toprule
+\textbf{Model} & \textbf{Rank} & \textbf{CTFI} & \textbf{NLP} & \textbf{Purpose} \\
+\midrule
+LR Baseline        & \checkmark & \checkmark & -        & Interpretable linear baseline; validates CTFI direction \\
+RF - No CTFI     & \checkmark & -        & -        & Ablation control: rank-only nonlinear \\
+RF - Traditional & \checkmark & \checkmark & -        & Isolates CTFI contribution \\
+RF - Full        & \checkmark & \checkmark & \checkmark & Isolates NLP contribution \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Training Protocol}
+
+\textbf{Temporal split}: Oldest 80\% by match date\,=\,train ($n\!\approx\!35{,}175$); newest 20\%\,=\,test ($n\!\approx\!8{,}793$). Random k-fold splitting is methodologically incorrect: it could train on 2023 data while testing on 2010 data. As ranking systems, playing styles, and player pools evolve over time, this constitutes temporal leakage.
+
+\textbf{SMOTE inside CV fold}: SMOTE synthesizes minority-class examples by interpolating between existing ones, applied via \texttt{imblearn.Pipeline} inside each fold. If applied before CV, synthetic examples could appear in validation folds-a common error producing artificially inflated estimates. \texttt{class\_weight='balanced'} also applied.
+
+\textbf{Hyperparameter tuning}: 5-fold stratified CV, grid search scoring: ROC-AUC. See Appendix~\ref{app:hparams} for grids.
+
+\textbf{Metrics}: PR-AUC (primary-no-skill baseline = upset rate = 0.301); ROC-AUC (enables prior-literature comparison); Brier Score (calibration quality); F1 and Recall at threshold 0.5.
+
+\textbf{Why McNemar's, not a t-test?} All four models are evaluated on the \emph{same} 8,793 test instances-predictions are correlated. A two-sample $t$-test assumes independence and would be methodologically wrong here. McNemar's tests whether the disagreements between classifiers are symmetric:
+$\chi^2 = (|n_{01}-n_{10}|-1)^2 / (n_{01}+n_{10})$,
+where $n_{01}$ = instances Model B got right that Model A got wrong, $n_{10}$ = reverse.
+
+%% =============================================================================
+\section{Results \& Analysis}
+%% =============================================================================
+
+\subsection{Exploratory Data Analysis}
+
+\textbf{CTFI vs.\ upset rate by surface} (Figure~\ref{fig:eda}a): Upset rate rises with CTFI on all three surfaces, which is the pre-modeling validation of the hypothesis. However, the magnitude matters: on Clay (Roland Garros), the top CTFI decile shows $\sim$14 percentage points higher upset rate than the bottom decile. This is not a coincidence-clay-court rallies are 30-40\% longer than on hard courts, meaning each accumulated court minute represents more physical work. Players who have played multiple five-set clay-court matches before a quarterfinal carry a disproportionate physiological debt. On Grass (Wimbledon), the effect is only $\sim$8 percentage points, consistent with shorter, serve-dominated play limiting CTFI accumulation in the first place. The surface-specific divergence confirms CTFI is capturing a physiological signal, not merely re-encoding round number. If CTFI were purely a tournament-progress proxy, the curves would look identical across surfaces.
+
+\textbf{Correlation heatmap} (Figure~\ref{fig:eda}b): \texttt{ctfi\_minutes}/\texttt{ctfi\_sets} at $r\!=\!0.91$ validates the sets-based fallback. The most important correlation is \texttt{round\_num}/\texttt{ctfi\_minutes} at $r\!=\!0.63$-not 1.0. If these were perfectly collinear, CTFI would add zero independent information beyond knowing the round. The partial correlation of 0.63 is the feature-design validation: two players in the same quarterfinal can have dramatically different CTFI values based on whether their prior matches went to three or five sets. That difference is precisely what CTFI is designed to capture and what rank-plus-round models cannot see.
+
+\begin{figure}[H]\centering
+\begin{subfigure}[t]{0.48\textwidth}
+\fbox{\parbox[c][3.5cm][c]{\textwidth}{\centering\small\textit{Insert \texttt{ctfi\_upset\_by\_surface.png}}\\Error bars = 95\% binomial CI.}}
+\caption{CTFI decile vs.\ upset rate by surface.}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.48\textwidth}
+\fbox{\parbox[c][3.5cm][c]{\textwidth}{\centering\small\textit{Insert \texttt{correlation\_heatmap.png}}}}
+\caption{Pearson correlation matrix.}
+\end{subfigure}
+\caption{Exploratory data analysis.}\label{fig:eda}
+\end{figure}
+
+\subsection{Model Performance}
+
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Model} & \textbf{PR-AUC}$\uparrow$ & \textbf{ROC-AUC}$\uparrow$ & \textbf{F1}$\uparrow$ & \textbf{Recall}$\uparrow$ & \textbf{Brier}$\downarrow$ \\
+\midrule
+LR Baseline (rank + CTFI)         & 0.379 & 0.610 & 0.497 & 0.767 & 0.246 \\
+RF - No CTFI (rank only)         & 0.429 & 0.658 & 0.515 & 0.670 & 0.229 \\
+RF - Traditional (rank + CTFI)   & 0.429 & 0.658 & 0.514 & 0.674 & 0.229 \\
+\textbf{RF - Full (rank+CTFI+NLP)} & \textbf{0.436} & \textbf{0.664} & \textbf{0.516} & \textbf{0.659} & \textbf{0.225}\\
+\midrule
+No-skill baseline                   & 0.301 & 0.500 & -   & 1.000 & 0.210 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Interpreting Each Comparison in Domain Context}
+
+\textbf{LR Baseline (PR-AUC\,=\,0.379, ROC-AUC\,=\,0.610)}: LR performs worst in discriminative ability (lowest ROC-AUC) but achieves the highest Recall (0.767)-it is the most aggressive upset-flagger. This is because LR's CTFI coefficient is positive: every additional court minute increases the log-odds of an upset. LR is essentially saying ``any player who played longer is more likely to lose next time,'' which is a blunt but directionally correct heuristic. The high Recall at low precision tells us LR catches 77\% of actual upsets but at the cost of many false alarms-it over-predicts upsets. This is a known property of linear models under class imbalance: they can over-generalize the minority class signal. Moving to RF improves Precision at the cost of Recall, producing a more refined flag.
+
+\textbf{LR vs.\ RF-No-CTFI}: RF-No-CTFI (ROC-AUC\,=\,0.658) dramatically outperforms LR Baseline (0.610) in ROC-AUC-a gap of 0.048 points-using only ranking features. This tells us that the Random Forest, by modeling nonlinear rank interactions (e.g., threshold effects near rank parity), captures substantially more signal from the rank features than LR can. Specifically, the RF can learn that a rank-5 vs.\ rank-8 matchup is qualitatively different from a rank-45 vs.\ rank-48 matchup, even though the raw difference is 3 in both cases. LR must smooth over this distinction. This comparison cleanly separates \emph{classifier architecture} from \emph{feature content}: the RF's advantage here comes from architecture, not CTFI.
+
+\textbf{CTFI ablation-RF-No-CTFI vs.\ RF-Traditional}: This comparison isolates CTFI's contribution with classifier held constant. PR-AUC is essentially identical (0.4293 vs.\ 0.4294) and ROC-AUC differs by only 0.0003-effectively zero. The McNemar test is statistically significant ($p\!=\!0.025$), which means the two models make \emph{different} predictions. But the direction tells the real story: $n_{10}\!=\!92 > n_{01}\!=\!63$ means RF-No-CTFI wins more individual disagreements than RF-Traditional. CTFI changes predictions without improving them on net.
+
+The most likely cause is the data quality limitation: approximately 31\% of rows have `minutes' equal to zero or missing, leaving CTFI\,=\,0 for those matches even though they were played. When the model encounters CTFI\,=\,0, it cannot determine whether the player is a true first-round entrant or simply a player for whom duration data was not recorded. This indistinguishability introduces noise rather than signal. The theoretical case for CTFI remains strong-the EDA shows upset rate rising with CTFI on all surfaces-but the current operationalization is limited by historical data quality.
+
+\textbf{NLP ablation-RF-Traditional vs.\ RF-Full}: This is the dominant empirical finding of the project. PR-AUC increases from 0.429 to 0.436 (+0.007) and ROC-AUC from 0.658 to 0.664 (+0.006). The McNemar test is overwhelmingly significant: $\chi^2\!=\!27.28$, $p\!<\!0.001$, with $n_{01}\!=\!238$ vs.\ $n_{10}\!=\!136$ (1.75$\times$ advantage). This is not a marginal result-at this significance level, it is essentially impossible to attribute to sampling variability.
+
+What makes this result striking is the 74.2\% NLP imputation rate. For nearly three quarters of all observations, the NLP features are surface-group medians-the same repeated value, not real transcript data. The model is learning from NLP features that are mostly identical noise. Despite this, RF-Full wins 238 individual disagreements vs.\ 136. The real NLP signal (from the 25.8\% of rows with genuine transcripts) is strong enough to dominate even this severe dilution. In tennis terms: when a player describes exhaustion, injury pain, or mental fatigue in a post-match press conference, this language is a genuine predictor that their next match is more likely to produce an upset.
+
+\textbf{Brier score and calibration}: All models score 0.225-0.246 vs.\ the no-skill baseline of 0.210. This is a sobering finding: the models are good at \emph{ranking} matches by upset risk (real ROC-AUC improvements) but their absolute probability estimates are not well-calibrated. A model predicting 35\% upset probability may be correct in ranking terms (this match is riskier than one where it predicts 20\%) but the 35\% figure itself should not be taken at face value without post-hoc isotonic recalibration. For a coaching staff using the model to identify high-risk matches, the ranking is what matters. For a betting platform needing calibrated odds, recalibration would be required.
+
+\begin{figure}[H]\centering
+\begin{subfigure}[t]{0.48\textwidth}
+\fbox{\parbox[c][3cm][c]{\textwidth}{\centering\small\textit{ \texttt{precision_recall_curves.png}}\\Dashed = no-skill (0.301).}}
+\caption{PR curves.}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.48\textwidth}
+\fbox{\parbox[c][3cm][c]{\textwidth}{\centering\small\textit{Insert \texttt{roc\_curves\_all.png}}}}
+\caption{ROC curves.}
+\end{subfigure}
+\begin{subfigure}[t]{0.48\textwidth}
+\fbox{\parbox[c][3cm][c]{\textwidth}{\centering\small\textit{Insert \texttt{confusion\_matrices.png}}}}
+\caption{Confusion matrices (threshold\,=\,0.5).}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.48\textwidth}
+\fbox{\parbox[c][3cm][c]{\textwidth}{\centering\small\textit{Insert \texttt{calibration\_curves.png}}}}
+\caption{Calibration curves.}
+\end{subfigure}
+\caption{Full model evaluation suite.}
+\end{figure}
+
+\textbf{Confusion matrices}: All models are conservative-they default to ``expected result'' and flag upsets only with strong evidence. RF-Full's Recall of 0.659 at threshold 0.5 means it correctly flags 66 of every 100 genuine upsets in advance. That is substantially better than random (which would flag 30.1\% of upsets by chance), but 34\% of actual upsets remain surprises the model cannot anticipate. This conservatism is structural: the 30:70 class imbalance means the majority-class ``no upset'' signal dominates training even with SMOTE. Lowering the threshold to 0.35 would increase Recall at the cost of Precision-a deployment-context tradeoff.
+
+\subsection{SHAP Feature Importance (RF-Full)}
+
+\begin{figure}[H]\centering
+\fbox{\parbox[c][4cm][c]{\textwidth}{\centering\small\textit{Insert \texttt{shap\_importance.png}}. SHAP beeswarm: each dot = one test instance.}}
+\caption{SHAP feature importances for RF-Full.}\label{fig:shap}
+\end{figure}
+
+\begin{center}\small
+\begin{tabular}{rlp{9cm}}
+\toprule
+\textbf{Rank} & \textbf{Feature} & \textbf{Domain Interpretation} \\
+\midrule
+1 & \texttt{log\_rank\_diff}   & Largest overall predictor; widening rank gap dramatically lowers upset probability. \\
+2 & \texttt{rank\_ratio}       & Proportional dominance; complements log-difference for nonlinear rank dynamics. \\
+3 & \texttt{fatigue\_total}    & \textbf{NLP}: explicit fatigue language in post-match interview predicts next-match upset risk. \\
+4 & \texttt{round\_num}        & Later rounds = more evenly matched survivors; higher structural upset probability. \\
+5 & \texttt{rank}              & Lower-ranked player has higher upset probability at any given relative ranking. \\
+6 & \texttt{sentiment\_polarity} & Negative overall language tone signals fatigue beyond explicit keyword counts. \\
+7 & \texttt{ctfi\_diff}        & Relative court-time: directional CTFI signal where minutes data is available. \\
+8 & \texttt{ctfi\_minutes}     & Absolute court-time accumulation. \\
+9 & \texttt{llm\_is\_fatigued} & LLM zero-shot catches indirect fatigue expressions both other NLP layers miss. \\
+10 & \texttt{is\_underdog}     & Binary underdog flag; complements continuous rank features. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The SHAP ranking confirms and extends the McNemar findings. Three NLP features appear in the top 10 (ranks 3, 6, 9), while CTFI features rank 7th and 8th-still influential but below NLP. In practical terms: once we know the ranking gap and the round, the most informative additional question is not ``how many minutes did the player play?'' but ``what did the player say about how they feel?'' This is a genuine insight about tennis: player self-reporting of fatigue in press conferences captures something real that match-duration data alone does not.
+
+\subsection{McNemar's Paired Significance Tests}
+
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Comparison} & $n_{01}$ & $n_{10}$ & $\chi^2$ & $p$ & \textbf{Result} \\
+\midrule
+RF-Traditional vs.\ RF-No-CTFI & 63 & 92 & 5.06 & 0.025 & Sig.\ but $n_{10}>n_{01}$: CTFI unhelpful \\
+RF-Full vs.\ RF-Traditional    & 238 & 136 & 27.28 & $<$0.001 & \textbf{Strongly significant: NLP helpful} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Unsupervised Clustering: What It Actually Shows}
+
+K-Means with $k\!=\!3$ (silhouette-optimal, score\,=\,0.288) on player-level aggregates (mean rank, mean CTFI, surface distribution) without using upset labels:
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Cluster} & \textbf{N} & \textbf{Mean Rank} & \textbf{Mean CTFI (sets)} & \textbf{Upset Rate} \\
+\midrule
+0 - Mid-ranked, low CTFI  & 735 & 118.8 & 45.2 & 31.7\% \\
+1 - High-ranked, high CTFI & 323 & 46.1 & 126.5 & 31.9\% \\
+2 - Low-ranked, low CTFI  & 77  & 195.5 & 54.9  & 31.5\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The honest interpretation: \textbf{all three clusters have essentially the same upset rate ($\pm$0.4 percentage points)}. Despite identifying groups with different rank profiles and CTFI levels, the clustering does \emph{not} produce meaningfully differentiated upset-risk archetypes. Two observations follow. First, this is consistent with the supervised finding: CTFI as currently computed (with many zero-minute defaults) does not produce strong upset-rate differentiation even in unsupervised analysis. Second, the silhouette score of 0.288 indicates weak cluster separation-the player feature space does not have strong natural clustering. The overall upset rate of 30.1\% is the dominant pattern, and neither rank nor CTFI in their current form creates distinct high-risk and low-risk player archetypes in this data.
+
+This is not a failed analysis-it is a methodologically honest finding. Not all expected patterns materialize, and reporting this honestly is more scientifically valuable than forcing a favourable narrative onto the data.
+
+%% =============================================================================
+\section{Discussion}
+%% =============================================================================
+
+\subsection{What the Results Actually Tell Us}
+
+The results form a coherent and honest story about upset prediction:
+
+\textbf{NLP fatigue language is the dominant novel signal.} Three converging pieces of evidence: (1) Strongly significant McNemar test ($p\!<\!0.001$, $n_{01}=238 \gg n_{10}=136$); (2) Three NLP features in SHAP top 10; (3) RF-Full's consistent metric improvements over RF-Traditional. When players express fatigue in post-match language, this is a genuine and predictive signal about their next-match upset vulnerability. This finding holds despite 74.2\% NLP imputation-the signal from real transcripts is strong enough to overcome the dilution.
+
+\textbf{CTFI is a sound concept limited by data quality.} The McNemar test for CTFI is significant ($p\!=\!0.025$), but the direction is unfavourable: RF-No-CTFI wins more individual disagreements. The EDA shows the expected CTFI-upset relationship in the raw data (monotonic upset rate increase across CTFI deciles, varying meaningfully by surface), but this pattern is diluted in modeling by the many rows where CTFI\,=\,0 due to missing minutes data. A richer historical dataset with complete match duration records would likely show stronger CTFI signal.
+
+\textbf{Ranking is still the strongest predictor overall}, consistent with all prior literature. \texttt{log\_rank\_diff} ranks first in SHAP by a large margin. The project's contribution is showing that language and fatigue features provide additional predictive value beyond rankings alone-not that they replace rankings.
+
+\subsection{Limitations}
+
+\textbf{L1 - NLP coverage (74.2\% imputed)}: The most consequential limitation. Transcripts are not missing at random: they are rarer for lower-seeded players, older matches, and tournaments with incomplete ASAP Sports archives. Expanding to the estimated 8,000+ available transcripts is the highest-impact improvement.
+
+\textbf{L2 - Match duration data quality}: $\sim$31\% of rows have missing or zero `minutes', leaving CTFI\,=\,0 by default. This is why CTFI adds less signal than theoretically expected. A complete duration dataset-or a more robust fallback using point counts or GPS data-would materially improve CTFI's predictive value.
+
+\textbf{L3 - ATP/WTA CTFI scale difference}: WTA matches are best-of-3 while ATP are best-of-5. The same CTFI value represents different proportions of total possible fatigue in each tour. A tour-normalized CTFI (e.g., minutes-per-match or as a fraction of typical maximum tournament time) might improve cross-tour comparability.
+
+\textbf{L4 - Survivorship selection}: Players appearing in late rounds with high CTFI are more physically durable by selection-they survived. The CTFI-upset correlation may partly reflect that their opponents are also more capable, not purely fatigue causation.
+
+\textbf{L5 - Calibration}: All models have Brier scores near the no-skill baseline, indicating poor absolute probability calibration. Isotonic regression recalibration is required for any deployment needing precise probabilities.
+
+\textbf{L6 - Temporal distribution shift}: Playing styles, court speeds, racket technology, and conditioning have changed substantially from 1990 to 2024. Models trained primarily on early data may not perfectly represent modern tennis.
+
+\subsection{Future Work}
+
+(1) Expanded transcript corpus ($\sim$8,000 available); (2) XGBoost/LightGBM with monotone rank constraints; (3) Post-hoc isotonic calibration; (4) Tour-normalized CTFI; (5) Betting market comparison for external validity.
+
+%% =============================================================================
+\section{System Architecture}
+%% =============================================================================
+
+\begin{center}\small
+\begin{tabular}{rllp{4cm}}
+\toprule
+\textbf{Phase} & \textbf{Script} & \textbf{Output} & \textbf{Key Libraries} \\
+\midrule
+1 & \texttt{data\_ingestion.py}  & \texttt{tennis\_upsets.db} & SQLAlchemy, requests, pandas \\
+2 & \texttt{scraping.py}         & Transcripts $\to$ DB (\emph{time-intensive}) & BeautifulSoup, requests \\
+3 & \texttt{nlp.py}              & \texttt{nlp\_features.csv} & transformers, HuggingFace \\
+4 & \texttt{features.py}         & \texttt{features.csv} (43,968 rows) & pandas, SQLite \\
+5 & \texttt{model.py}            & \texttt{upset\_model.pkl} + 8 PNGs & scikit-learn, imblearn, SHAP \\
+6 & \texttt{clustering.py}       & \texttt{player\_clusters.csv} + 3 PNGs & scikit-learn \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Orchestrated by \texttt{run\_pipeline.py} (\texttt{-from N}, \texttt{-skip-scrape}, \texttt{-llm}, \texttt{-no-cluster} flags). Streamlit dashboard (\texttt{app.py}) deployed on Streamlit Community Cloud provides real-time upset prediction; a RAG Q\&A agent (ChromaDB + LangChain + Groq) supports natural language queries over match and transcript data. As a solo project, the six-phase analytical pipeline is the primary contribution; the dashboard is supplementary.
+
+%% =============================================================================
+\section{Conclusion}
+%% =============================================================================
+
+This project introduced CTFI as the first formalized within-tournament fatigue feature for Grand Slam upset prediction and conducted a rigorous four-model ablation on 43,968 player-match observations across both ATP and WTA tours (1990-2024). The results are honest and specific: NLP fatigue language from player press conferences is a strongly significant predictor of next-match upset risk ($p\!<\!0.001$, McNemar's; $n_{01}\!=\!238$ vs.\ $n_{10}\!=\!136$), while CTFI as currently operationalized is limited by missing historical match duration data. Both findings advance understanding of what drives upsets beyond rankings alone. The project applies every major CS 210 course concept in a unified, reproducible, end-to-end pipeline built entirely by a single author.
+
+%% =============================================================================
+\section*{References}
+%% =============================================================================
+{\small
+\begin{description}[leftmargin=1.5em,noitemsep]
+\item[{[1]}] del Corral \& Prieto-Rodriguez (2010). \textit{Int.\ J.\ Forecasting} 26(3), 551-563.
+\item[{[2]}] Kovalchik (2016). \textit{J.\ Quant.\ Analysis in Sports} 12(3), 127-138.
+\item[{[3]}] Ning, Zhang \& Wu (2021). \textit{Proc.\ ICCBDAI 2021.}
+\item[{[4]}] Hornery et al.\ (2007). \textit{Brit.\ J.\ Sports Medicine} 41(8), 531-536.
+\item[{[5]}] Reid, McMurtrie \& Crespo (2016). \textit{Int.\ J.\ Perf.\ Analysis in Sport} 10(2), 131-138.
+\item[{[6]}] Chawla et al.\ (2002). SMOTE. \textit{JAIR} 16, 321-357.
+\item[{[7]}] Sanh et al.\ (2019). DistilBERT. \textit{arXiv:1910.01108.}
+\item[{[8]}] Niculescu-Mizil \& Caruana (2005). \textit{Proc.\ ICML}, 625-632.
+\item[{[9]}] Sackmann (2023). \texttt{tennis\_atp}/\texttt{tennis\_wta}. github.com/JeffSackmann.
+\end{description}
+}
+
+%% =============================================================================
+\appendix
+\section{Complete Feature Reference Table}
+\label{app:features}
+
+\begin{longtable}{llp{8.5cm}}
+\toprule
+\textbf{Feature} & \textbf{Type} & \textbf{Description \& Selection Rationale} \\
+\midrule
+\endhead
+\texttt{log\_rank\_diff} & Numeric & $\text{sgn}(\Delta)\!\cdot\!\log(1+|\Delta|)$; compresses right-tail skew of rank distribution \\
+\texttt{rank\_ratio} & Numeric & rank / opp\_rank; proportional dominance, scale-invariant \\
+\texttt{is\_underdog} & Binary & 1 if rank $>$ opp\_rank; directly encodes class definition \\
+\texttt{rank} & Numeric & ATP/WTA world ranking at time of match \\
+\texttt{opp\_rank} & Numeric & Opponent's world ranking \\
+\texttt{rank\_bin} & Ordinal & top10/top30/top100/outside100; qualitative tier encoding \\
+\texttt{ctfi\_minutes} & Numeric & \textbf{Novel}: cumulative court minutes before current round (window function) \\
+\texttt{ctfi\_diff} & Numeric & \textbf{Novel}: player CTFI $-$ opponent CTFI; relative fatigue \\
+\texttt{ctfi\_sets} & Numeric & Sets-based CTFI fallback for missing-minutes rows \\
+\texttt{round\_num} & Ordinal & Tournament round [1=R128, 7=Final] \\
+\texttt{best\_of} & Binary & 3 (WTA) or 5 (ATP) \\
+\texttt{surface\_Hard} & Binary & One-hot: Australian Open + US Open \\
+\texttt{surface\_Clay} & Binary & One-hot: Roland Garros \\
+\texttt{surface\_Grass} & Binary & One-hot: Wimbledon \\
+\texttt{sentiment\_polarity} & Float & DistilBERT SST-2 sentiment $[-1,1]$ from transcript \\
+\texttt{fatigue\_total} & Integer & Total fatigue lexicon keyword count; subjective fatigue \\
+\texttt{fatigue\_physical} & Integer & Physical fatigue sub-score \\
+\texttt{fatigue\_mental} & Integer & Mental fatigue sub-score \\
+\texttt{fatigue\_schedule} & Integer & Schedule fatigue sub-score \\
+\texttt{fatigue\_injury} & Integer & Injury mention sub-score \\
+\texttt{fatigue\_motivation} & Integer & Motivation-loss sub-score \\
+\texttt{fatigue\_word\_density} & Float & fatigue\_total / word\_count; length-normalized \\
+\texttt{first\_person\_rate} & Float & Proportion of first-person pronouns \\
+\texttt{negation\_rate} & Float & Negation token proportion \\
+\texttt{llm\_is\_fatigued} & Binary & Mistral-7B zero-shot fatigue label \\
+\textbf{\texttt{upset}} & Binary & \textbf{Target}: 1 = lower-ranked player won \\
+\bottomrule
+\end{longtable}
+
+\section{Hyperparameter Grids}
+\label{app:hparams}
+
+\begin{lstlisting}[language=Python,caption={Hyperparameter grids in \texttt{model.py}. Best params from CV shown in Results.}]
+RF_GRID = {
+    "model__n_estimators":     [200, 400],       # Best: 400
+    "model__max_depth":        [None, 8, 15],    # Best: 8
+    "model__min_samples_leaf": [3, 7],           # Best: 7
+    "model__max_features":     ["sqrt", 0.5],   # Best: sqrt (trad), 0.5 (full)
+}
+LR_GRID = {
+    "model__C":        [0.01, 0.1, 1.0, 10.0],  # Best: 10.0
+    "model__solver":   ["lbfgs", "saga"],         # Best: saga
+    "model__max_iter": [1000],
+}
+\end{lstlisting}
+
+\section{Fatigue Lexicon (Excerpt)}
+\label{app:lexicon}
+
+\begin{lstlisting}[language=Python,caption={Domain-specific fatigue lexicon in \texttt{nlp.py} (excerpt).}]
+FATIGUE_LEXICON = {
+    "physical_fatigue": [
+        "tired", "exhausted", "fatigued", "heavy legs", "drained",
+        "worn out", "stiff", "cramping", "not 100%", "body is sore",
+    ],
+    "mental_fatigue": [
+        "mentally drained", "mentally tired", "lost focus",
+        "struggled to focus", "mentally exhausting",
+    ],
+    "schedule_fatigue": [
+        "back-to-back", "quick turnaround", "no rest day",
+        "tight schedule", "not enough time to recover",
+    ],
+    "injury": [
+        "my knee", "my shoulder", "my back", "strapped", "taped",
+        "not fully fit", "playing through", "taking medication",
+    ],
+    "motivation_loss": [
+        "hard to get up", "difficult to stay motivated", "doubt",
+    ],
+}
+\end{lstlisting}
+
+\section{Round Normalization Map}
+\label{app:rounds}
+
+\begin{lstlisting}[language=Python,caption={Round normalization in \texttt{data\_ingestion.py}.}]
+# Sackmann uses two conventions across years.
+# Post-2000 (most files):  R128, R64, R32, R16, QF, SF, F
+# Older convention:        R1,   R2,  R3,  R4,  QF, SF, F
+# CRITICAL: Sackmann's match_num runs HIGH-to-LOW (1 = Final).
+# Sorting by match_num would REVERSE CTFI accumulation — a silent bug.
+# Always order by round_num (below) for correct window function ordering.
+ROUND_ORDER = {
+    "R128": 1, "R64": 2, "R32": 3, "R16": 4,
+    "R1":   1, "R2":  2, "R3":  3, "R4":  4,
+    "QF": 5, "SF": 6, "F": 7,
+}
+\end{lstlisting}
+
+%% =============================================================================
+\section{Full Numerical Results from Pipeline Run}
+\label{app:results}
+{\small
+
+The following reproduces exact values from the pipeline run used in this report (43,968 observations, temporal split 80/20, random seed 42). All values are on the held-out test set ($n\!=\!8{,}793$).
+
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Model} & \textbf{PR-AUC} & \textbf{ROC-AUC} & \textbf{F1} & \textbf{Recall} & \textbf{Brier} \\
+\midrule
+LR Baseline (rank + CTFI) & 0.3789 & 0.6096 & 0.4968 & 0.7665 & 0.2459 \\
+RF - No CTFI            & 0.4293 & 0.6580 & 0.5149 & 0.6702 & 0.2290 \\
+RF - Traditional        & 0.4294 & 0.6583 & 0.5143 & 0.6741 & 0.2286 \\
+RF - Full               & 0.4364 & 0.6640 & 0.5158 & 0.6586 & 0.2246 \\
+\midrule
+No-skill baseline         & 0.3010 & 0.5000 & -    & 1.0000 & 0.2100 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Best hyperparameters (from CV)}:
+\begin{itemize}
+  \item LR Baseline: \texttt{C=10.0, solver=saga, max\_iter=1000}
+  \item RF - No CTFI: \texttt{max\_depth=8, max\_features=sqrt, min\_samples\_leaf=7, n\_estimators=400}
+  \item RF - Traditional: \texttt{max\_depth=8, max\_features=sqrt, min\_samples\_leaf=7, n\_estimators=400}
+  \item RF - Full: \texttt{max\_depth=8, max\_features=0.5, min\_samples\_leaf=7, n\_estimators=400}
+\end{itemize}
+
+\textbf{McNemar's test results (continuity-corrected)}:
+\begin{center}
+\begin{tabular}{lrrrrl}
+\toprule
+\textbf{Comparison} & $n_{01}$ & $n_{10}$ & $\chi^2$ & $p$ & \textbf{Interpretation} \\
+\midrule
+RF-Traditional vs.\ RF-No-CTFI & 63 & 92 & 5.06 & 0.025 & Sig.\ but $n_{10}>n_{01}$: CTFI hurts \\
+RF-Full vs.\ RF-Traditional    & 238 & 136 & 27.28 & $<$0.001 & Strongly sig.; NLP helps \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{K-Means clustering} ($k\!=\!3$, silhouette\,=\,0.288, on 1,135 players with $\ge\!5$ matches):
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Cluster} & \textbf{N} & \textbf{Mean Rank} & \textbf{Mean CTFI (sets)} & \textbf{Upset Rate} \\
+\midrule
+0 & 735 & 118.8 & 45.2 & 31.7\% \\
+1 & 323 &  46.1 & 126.5 & 31.9\% \\
+2 &  77 & 195.5 &  54.9 & 31.5\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Training set size}: 35,175 rows; \textbf{Test set size}: 8,793 rows.
+\textbf{Upset base rate in training}: 0.301 (30.1\%).
+}
+\textbf{All plots generated}: \texttt{roc\_curves\_all.png}, \texttt{precision\_recall\_curves.png}, \texttt{confusion\_matrices.png}, \texttt{calibration\_curves.png}, \texttt{metric\_summary.png}, \texttt{ctfi\_upset\_by\_surface.png}, \texttt{correlation\_heatmap.png}, \texttt{shap\_importance.png}.
+
+%% =============================================================================
+\section{Database Schema (SQL)}
+\label{app:schema}
+{\small
+\begin{lstlisting}[language=SQL,caption={3NF SQLite schema created by \texttt{data\_ingestion.py}.}]
+- Players table (one row per unique player, ATP or WTA)
+CREATE TABLE players (
+    player_id  TEXT PRIMARY KEY,
+    full_name  TEXT,
+    hand       TEXT,
+    dob        TEXT,
+    ioc        TEXT,
+    tour       TEXT   - 'ATP' or 'WTA'
+);
+
+- Matches table (one row per match, both tours combined)
+- winner_id and loser_id are foreign keys -> players.player_id
+CREATE TABLE matches (
+    tourney_id    TEXT,
+    tourney_name  TEXT,
+    slam_name     TEXT,   - 'Australian Open' | 'Roland Garros' | 'Wimbledon' | 'US Open'
+    tourney_date  TEXT,
+    match_num     INTEGER,
+    round         TEXT,
+    round_num     INTEGER, - normalised ordinal 1-7 (1=R128, 7=Final)
+    surface       TEXT,
+    best_of       INTEGER,
+    winner_id     TEXT REFERENCES players(player_id),
+    loser_id      TEXT REFERENCES players(player_id),
+    winner_rank   REAL,
+    loser_rank    REAL,
+    minutes       REAL,    - match duration (NULL for many pre-2000 rows)
+    score         TEXT,
+    upset         INTEGER, - 1 if winner_rank > loser_rank
+    rank_diff     REAL,
+    tour          TEXT
+);
+
+- Rankings table (weekly ATP/WTA world ranking snapshots)
+CREATE TABLE rankings (
+    ranking_date  TEXT,
+    player_id     TEXT REFERENCES players(player_id),
+    rank          INTEGER,
+    points        INTEGER,
+    tour          TEXT
+);
+
+- Transcripts table (one row per scraped press conference)
+CREATE TABLE transcripts (
+    player_id           TEXT REFERENCES players(player_id),
+    player_name         TEXT,
+    tourney_name        TEXT,
+    tourney_date        TEXT,
+    round               TEXT,
+    raw_text            TEXT,
+    sentiment_polarity REAL, fatigue_total REAL, fatigue_word_density REAL,
+    fatigue_physical REAL, fatigue_mental REAL, fatigue_schedule REAL,
+    fatigue_injury REAL, fatigue_motivation REAL, first_person_rate REAL,
+    negation_rate REAL, llm_fatigue_label TEXT, nlp_processed INTEGER DEFAULT 0
+);
+
+- 6 covering indexes for CTFI window function, transcript join, and tour slice
+CREATE INDEX idx_m_winner ON matches(winner_id, tourney_id, round_num);
+CREATE INDEX idx_m_loser  ON matches(loser_id,  tourney_id, round_num);
+CREATE INDEX idx_m_date   ON matches(tourney_date);
+CREATE INDEX idx_m_slam   ON matches(slam_name);
+CREATE INDEX idx_m_tour   ON matches(tour);
+CREATE INDEX idx_p_name   ON players(full_name);
+\end{lstlisting}
+}
+
+\end{document}

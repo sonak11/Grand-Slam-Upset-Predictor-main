@@ -1,15 +1,4 @@
-"""
-fix_features_join.py
-=====================
-Patches features.py to join transcripts on player_name instead of player_id.
-The transcripts table has player_id=NULL for scraped rows, so the join was
-producing 0 matches. This fix uses player_name + slam_name for the merge.
 
-Run once:
-    python3.11 fix_features_join.py
-    python3.11 features.py
-    python3.11 model.py
-"""
 
 FEATURES_FILE = "features.py"
 
@@ -35,7 +24,7 @@ OLD_CODE = '''    trans_subset = transcripts[["player_id", "tourney_name", "roun
 NEW_CODE = '''    # Use player_name as join key (player_id is NULL for most scraped transcripts)
     trans_subset = transcripts[["player_name", "tourney_name", "round"] + available].copy()
 
-    # Standardise round labels for joining
+    # standardise round labels for joining
     round_map = {
         "first round": "R1", "second round": "R2", "third round": "R3",
         "fourth round": "R4", "quarterfinal": "QF", "semifinal": "SF",
@@ -46,11 +35,11 @@ NEW_CODE = '''    # Use player_name as join key (player_id is NULL for most scra
         trans_subset["round"].str.lower().map(round_map).fillna(trans_subset["round"])
     )
 
-    # Normalise player names: strip whitespace, title-case
+    # normalise player names: strip whitespace, title-case
     trans_subset["player_name"] = trans_subset["player_name"].str.strip().str.title()
     matches["player_name"]      = matches["player_name"].str.strip().str.title()
 
-    # Aggregate: if multiple transcripts per player+tourney+round, take mean of NLP cols
+    # aggregate: if multiple transcripts per player+tourney+round, take mean of NLP cols
     trans_agg = (
         trans_subset
         .groupby(["player_name", "tourney_name", "round"], as_index=False)
@@ -58,7 +47,7 @@ NEW_CODE = '''    # Use player_name as join key (player_id is NULL for most scra
         .mean()
     )
 
-    # Primary join: player_name + tourney_name + round
+    # primary join: player_name + tourney_name + round
     merged = matches.merge(
         trans_agg,
         on=["player_name", "tourney_name", "round"],
@@ -66,7 +55,7 @@ NEW_CODE = '''    # Use player_name as join key (player_id is NULL for most scra
         suffixes=("", "_transcript"),
     )
 
-    # Fallback join on player_name + slam_name (some transcripts use slam_name not tourney_name)
+    # fallback join on player_name + slam_name (some transcripts use slam_name not tourney_name)
     unmatched_mask = merged[available[0]].isna() if available else pd.Series(False, index=merged.index)
     if unmatched_mask.sum() > 0 and "slam_name" in trans_subset.columns:
         trans_slam = trans_subset.copy()
@@ -83,7 +72,7 @@ def apply_patch():
         content = f.read()
 
     if OLD_CODE not in content:
-        print("❌ Could not find the target code block.")
+        print(" Could not find the target code block.")
         print("   features.py may have already been patched, or the code changed.")
         print("   Check features.py manually around the merge_transcripts function.")
         return False
@@ -93,7 +82,7 @@ def apply_patch():
     with open(FEATURES_FILE, "w") as f:
         f.write(new_content)
 
-    print("✅ features.py patched successfully.")
+    print(" features.py patched successfully.")
     print("   The transcript join now uses player_name instead of player_id.")
     return True
 

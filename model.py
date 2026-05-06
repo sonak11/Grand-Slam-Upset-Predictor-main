@@ -1,26 +1,7 @@
-# Suppress sklearn/joblib parallel worker UserWarnings BEFORE any imports
+# suppress sklearn/joblib parallel worker UserWarnings BEFORE any imports
 import os, warnings
 os.environ["PYTHONWARNINGS"] = "ignore::UserWarning"
 warnings.filterwarnings("ignore")
-
-"""
-PART 5 — Model Training & Evaluation (4-Model Ablation)
-=========================================================
-Trains four binary classifiers and compares them in a nested ablation:
-  A. LR Baseline         — Logistic Regression on rank + CTFI
-  B. RF — No CTFI        — Random Forest on rank only (ablation control)
-  C. RF — Traditional    — Random Forest on rank + CTFI
-  D. RF — Full           — Random Forest on rank + CTFI + NLP
-
-Additional outputs:
-  - McNemar's paired significance test (CTFI ablation, NLP ablation)
-  - SHAP feature importance (full model)
-  - Calibration curves, precision-recall curves, ROC curves, confusion matrices
-  - Metric summary bar chart
-
-Usage:
-    python model.py
-"""
 
 import warnings, joblib
 import numpy as np
@@ -49,7 +30,7 @@ try:
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
-    print("[WARN] shap not installed — SHAP plot will be skipped.")
+    print("[WARN] shap not installed - SHAP plot will be skipped.")
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -57,7 +38,7 @@ FEATURES_CSV = "features.csv"
 MODEL_OUT    = "upset_model.pkl"
 PLOTS_DIR    = "."
 
-# ── Feature sets ──────────────────────────────────────────────────────────────
+# feature sets 
 
 RANK_FEATURES = [
     "rank", "opp_rank", "rank_ratio", "log_rank_diff",
@@ -76,14 +57,14 @@ NLP_FEATURES = [
 CATEGORICAL_FEATURES = ["rank_bin"]
 TARGET = "upset"
 
-# Columns to drop (identifiers / non-features)
+# columns to drop (identifiers / non-features)
 DROP_COLS = [
     "player_id", "player_name", "tourney_date", "slam_name",
     "surface", "tour",
 ]
 
 
-# ── Data loading ──────────────────────────────────────────────────────────────
+# data loading 
 
 def load_features(path: str = FEATURES_CSV) -> pd.DataFrame:
     df = pd.read_csv(path)
@@ -98,7 +79,7 @@ def time_split(df: pd.DataFrame, test_frac: float = 0.20):
     return df.iloc[:-n_test].copy(), df.iloc[-n_test:].copy()
 
 
-# ── Preprocessing ─────────────────────────────────────────────────────────────
+# preprocessing 
 
 def build_preprocessor(feature_cols: list, cat_cols: list):
     num_cols = [c for c in feature_cols if c not in cat_cols]
@@ -114,7 +95,7 @@ def build_preprocessor(feature_cols: list, cat_cols: list):
     return ColumnTransformer(steps, remainder="drop")
 
 
-# ── Model builders ────────────────────────────────────────────────────────────
+# model builders 
 
 def make_lr_pipeline(feature_cols, cat_cols):
     return Pipeline([
@@ -133,7 +114,7 @@ def make_rf_pipeline(feature_cols, cat_cols):
     ])
 
 
-# ── Tuning ────────────────────────────────────────────────────────────────────
+# tuning 
 
 RF_GRID = {
     "model__n_estimators":     [200, 400],
@@ -158,7 +139,7 @@ def tune(pipeline, X, y, param_grid, cv=3, scoring="roc_auc"):
     return gs.best_estimator_
 
 
-# ── Evaluation ────────────────────────────────────────────────────────────────
+# evaluation 
 
 def evaluate(pipe, X_test, y_test, label):
     y_prob = pipe.predict_proba(X_test)[:, 1]
@@ -180,7 +161,7 @@ def evaluate(pipe, X_test, y_test, label):
             "recall": rec, "brier": brier, "y_prob": y_prob, "y_pred": y_pred}
 
 
-# ── McNemar's test ────────────────────────────────────────────────────────────
+# mcNemar's test 
 
 def mcnemar_test(y_test, y_pred_a, y_pred_b, label_a, label_b):
     """McNemar's continuity-corrected chi-squared test."""
@@ -200,7 +181,7 @@ def mcnemar_test(y_test, y_pred_a, y_pred_b, label_a, label_b):
     return {"n01": n01, "n10": n10, "chi2": chi2_stat, "p": p}
 
 
-# ── Plots ─────────────────────────────────────────────────────────────────────
+#plots 
 
 COLORS = {"LR Baseline": "#6b7280", "RF-No-CTFI": "#f59e0b",
           "RF-Traditional": "#3b82f6", "RF-Full": "#10b981"}
@@ -315,7 +296,7 @@ def plot_shap(pipe, X_test_df, feature_cols, cat_cols, label, path="shap_importa
         else:
             sv = np.array(shap_vals)
 
-        # Feature names after transform
+        # feature names after transform
         prep = pipe.named_steps["prep"]
         num_names = list(prep.transformers_[0][2])
         cat_names = list(prep.transformers_[1][2]) if len(prep.transformers_) > 1 else []
@@ -390,7 +371,7 @@ def plot_correlation_heatmap(df: pd.DataFrame, path="correlation_heatmap.png"):
     print(f"  Saved → {path}")
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+#main 
 
 def main():
     print("=" * 60)
@@ -400,7 +381,7 @@ def main():
     df = load_features(FEATURES_CSV)
     df = df.dropna(subset=[TARGET])
 
-    # Surface dummies discovered from data
+    # surface dummies discovered from data
     surface_dummy_cols = [c for c in df.columns if c.startswith("surface_")]
 
     train, test = time_split(df)
@@ -410,13 +391,13 @@ def main():
     print(f"\nTrain: {len(train):,} rows | Test: {len(test):,} rows")
     print(f"Upset base rate: {base_rate:.3f}")
 
-    # Available feature sets
+    # available feature sets
     available_rank  = [c for c in RANK_FEATURES + surface_dummy_cols if c in df.columns]
     available_ctfi  = [c for c in CTFI_FEATURES if c in df.columns]
     available_nlp   = [c for c in NLP_FEATURES  if c in df.columns]
     available_cat   = [c for c in CATEGORICAL_FEATURES if c in df.columns]
 
-    # ── Model A: LR Baseline (rank + CTFI) ──────────────────────────────────
+    # model A: LR Baseline (rank + CTFI) 
     print("\n[A] LR Baseline (rank + CTFI)")
     cols_a = available_rank + available_ctfi + available_cat
     cols_a = [c for c in cols_a if c in train.columns]
@@ -425,7 +406,7 @@ def main():
     pipe_a = tune(pipe_a, train[cols_a], y_train, LR_GRID, cv=3)
     res_a  = evaluate(pipe_a, test[cols_a], y_test, "LR Baseline")
 
-    # ── Model B: RF — No CTFI (rank only) ───────────────────────────────────
+    # model B: RF — No CTFI (rank only) 
     print("\n[B] RF — No CTFI (rank only)")
     cols_b = available_rank + available_cat
     cols_b = [c for c in cols_b if c in train.columns]
@@ -434,7 +415,7 @@ def main():
     pipe_b = tune(pipe_b, train[cols_b], y_train, RF_GRID, cv=3)
     res_b  = evaluate(pipe_b, test[cols_b], y_test, "RF-No-CTFI")
 
-    # ── Model C: RF — Traditional (rank + CTFI) ──────────────────────────────
+    # model C: RF — Traditional (rank + CTFI) 
     print("\n[C] RF — Traditional (rank + CTFI)")
     cols_c = available_rank + available_ctfi + available_cat
     cols_c = [c for c in cols_c if c in train.columns]
@@ -443,7 +424,7 @@ def main():
     pipe_c = tune(pipe_c, train[cols_c], y_train, RF_GRID, cv=3)
     res_c  = evaluate(pipe_c, test[cols_c], y_test, "RF-Traditional")
 
-    # ── Model D: RF — Full (rank + CTFI + NLP) ────────────────────────────────
+    # model D: RF — Full (rank + CTFI + NLP) 
     print("\n[D] RF — Full (rank + CTFI + NLP)")
     cols_d = available_rank + available_ctfi + available_nlp + available_cat
     cols_d = [c for c in cols_d if c in train.columns]
@@ -454,7 +435,7 @@ def main():
 
     all_results = [res_a, res_b, res_c, res_d]
 
-    # ── Summary table ─────────────────────────────────────────────────────────
+    # summary table 
     print("\n── Model comparison ──────────────────────────────────────────────")
     print(f"  {'Model':<22} {'PR-AUC':>8} {'ROC-AUC':>9} {'F1':>7} {'Recall':>8} {'Brier':>8}")
     for r in all_results:
@@ -462,7 +443,7 @@ def main():
               f"{r['f1']:>7.4f} {r['recall']:>8.4f} {r['brier']:>8.4f}")
     print("──────────────────────────────────────────────────────────────────")
 
-    # ── McNemar's tests ───────────────────────────────────────────────────────
+    # mcNemar's tests 
     print("\n── McNemar's Significance Tests ──────────────────────────────────")
     mn_ctfi = mcnemar_test(y_test, res_b["y_pred"], res_c["y_pred"],
                            "RF-No-CTFI", "RF-Traditional")
@@ -470,7 +451,7 @@ def main():
                            "RF-Traditional", "RF-Full")
     print("──────────────────────────────────────────────────────────────────")
 
-    # ── Plots ─────────────────────────────────────────────────────────────────
+    # plots 
     print("\nGenerating plots …")
     plot_roc_curves(all_results, y_test)
     plot_pr_curves(all_results, y_test, base_rate)
@@ -481,7 +462,7 @@ def main():
     plot_correlation_heatmap(df)
     plot_shap(pipe_d, test[cols_d], cols_d, cat_d, "RF-Full")
 
-    # ── Save model package ────────────────────────────────────────────────────
+    # save model package 
     package = {
         "model_lr":         pipe_a, "cols_lr":   cols_a,
         "model_rf_noct":    pipe_b, "cols_noct":  cols_b,

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-run_pipeline.py  —  Master Pipeline Runner
 
-Executes all six phases of the Grand Slam Upset Predictor pipeline
-in the correct order with progress logging and error handling.
+this is the main script to run the full pipeline 
+
+run_pipeline.py  -  master Pipeline Runner
+
+executtes all six phases of the Grand Slam Upset Predictor pipeline in the correct order with progress logging and error handling.
 
 Usage:
     python run_pipeline.py                # Full pipeline (Phases 1–6)

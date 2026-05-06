@@ -1,9 +1,4 @@
-"""
-Agent service: a LangChain SQL + vector agent that answers
-natural language questions about tennis upsets.
-Falls back to direct SQL + keyword search when LangChain is unavailable.
-"""
-
+#import libraries
 import os
 import re
 import sqlite3

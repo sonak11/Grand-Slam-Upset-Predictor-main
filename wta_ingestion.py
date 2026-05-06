@@ -1,21 +1,4 @@
-"""
-wta_ingestion.py
-=================
-Adds WTA Grand Slam match data + press conference transcripts
-to the existing tennis_upsets.db database.
 
-Run AFTER the full ATP pipeline is complete:
-    python data_ingestion.py
-    python scraping.py
-    python nlp.py
-    python features.py
-    python model.py
-    python wta_ingestion.py   ← run this, then re-run features.py + model.py
-
-Usage:
-    source venv/bin/activate
-    python wta_ingestion.py
-"""
 
 import re
 import io
@@ -31,7 +14,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# connfig 
 
 DB_PATH   = "tennis_upsets.db"
 DELAY_MIN = 1.5
@@ -59,7 +42,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── WTA CSV source ────────────────────────────────────────────────────────────
+#  WTA CSV source 
 
 WTA_CSV_URLS = {
     2022: "https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master/wta_matches_2022.csv",
@@ -77,7 +60,7 @@ WTA_SLAM_NAMES = {
     "560": "US Open",
 }
 
-# ── WTA ASAP Sports tournament dates ─────────────────────────────────────────
+#  WTA ASAP Sports tournament dates 
 
 WTA_TOURNAMENTS = [
     {"name":"Australian Open","title":"AUSTRALIAN+OPEN","start":"2022-01-17","end":"2022-01-29"},
@@ -95,7 +78,7 @@ WTA_TOURNAMENTS = [
 ]
 
 
-# ── Database ──────────────────────────────────────────────────────────────────
+# database 
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -164,7 +147,7 @@ def save_transcript(record):
     conn.close()
 
 
-# ── HTTP ──────────────────────────────────────────────────────────────────────
+#  HTTP 
 
 def polite_get(url):
     for attempt in range(1, MAX_RETRIES + 1):
@@ -179,7 +162,7 @@ def polite_get(url):
     return None
 
 
-# ── Part 1: WTA match data ────────────────────────────────────────────────────
+# part 1: WTA match data 
 
 ROUND_REMAP = {
     "R128": "R1", "R64": "R2", "R32": "R3", "R16": "R4",
@@ -201,7 +184,7 @@ def _get_slam_name(tourney_name, tourney_id):
     for key, val in SLAM_NAME_MAP.items():
         if key in t:
             return val
-    # Fallback: use tourney_id suffix
+    # fallback: use tourney_id suffix
     suffix = str(tourney_id).split("-")[-1][-3:]
     return WTA_SLAM_NAMES.get(suffix, tourney_name)
 
@@ -212,7 +195,7 @@ def ingest_wta_matches():
     log.info("  Part 1: WTA Match Data")
     log.info("=" * 55)
 
-    # Get actual column names from existing matches table
+    # get actual column names from existing matches table
     existing_cols = get_matches_columns()
     log.info(f"  Existing matches columns: {existing_cols}")
 
@@ -230,7 +213,7 @@ def ingest_wta_matches():
 
         log.info(f"  {len(df)} total WTA matches in {year}")
 
-        # Filter to Grand Slams by tourney_id suffix
+        # filter to Grand Slams by tourney_id suffix
         def is_slam(tid):
             return str(tid).split("-")[-1][-3:] in WTA_SLAM_IDS
         df = df[df["tourney_id"].apply(is_slam)].copy()
@@ -239,7 +222,7 @@ def ingest_wta_matches():
         if df.empty:
             continue
 
-        # Compute derived columns to match ATP schema
+        # compute derived columns to match ATP schema
         df["winner_rank"] = pd.to_numeric(df["winner_rank"], errors="coerce")
         df["loser_rank"]  = pd.to_numeric(df["loser_rank"],  errors="coerce")
         df               = df.dropna(subset=["winner_rank", "loser_rank"])
@@ -253,20 +236,20 @@ def ingest_wta_matches():
         df["best_of"]   = 3   # WTA Grand Slams best of 3
         df["tour"]      = "WTA"
 
-        # Normalise tourney_date
+        # normalise tourney_date
         df["tourney_date"] = pd.to_datetime(
             df["tourney_date"].astype(str), format="%Y%m%d", errors="coerce"
         ).dt.strftime("%Y-%m-%d")
 
-        # Remap round values to match ATP schema
+        # remap round values to match ATP schema
         if "round" in df.columns:
             df["round"] = df["round"].map(ROUND_REMAP).fillna(df["round"])
 
-        # Only keep columns that exist in the target table
+        # only keep columns that exist in the target table
         cols_to_use = [c for c in df.columns if c in existing_cols + ["tour"]]
         df = df[cols_to_use]
 
-        # Append to DB row-by-row (checking for duplicates)
+        # append to DB row-by-row (checking for duplicates)
         conn = get_connection()
         for _, row in df.iterrows():
             try:
@@ -294,7 +277,7 @@ def ingest_wta_matches():
     return total_saved
 
 
-# ── Part 2: WTA transcript scraping ──────────────────────────────────────────
+# part 2: WTA transcript scraping 
 
 def _extract_round(text):
     t = text.lower()
@@ -385,7 +368,7 @@ def scrape_interview(url, meta):
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # Primary: <p> tags (confirmed working)
+    # primary: <p> tags (confirmed working)
     paragraphs = [
         p.get_text(" ", strip=True)
         for p in soup.find_all("p")
@@ -393,7 +376,7 @@ def scrape_interview(url, meta):
     ]
     raw_text = "\n\n".join(paragraphs)
 
-    # Fallback: largest meaningful <td>
+    # fallback: largest meaningful <td>
     if len(raw_text) < 200:
         tds = soup.find_all("td")
         for td in sorted(tds, key=lambda t: len(t.get_text()), reverse=True):
@@ -431,7 +414,7 @@ def scrape_wta_transcripts():
     log.info("  Part 2: WTA Transcript Scraping")
     log.info("=" * 55)
 
-    # Build set of known WTA player names from DB
+    # build set of known WTA player names from DB
     conn      = get_connection()
     wta_rows  = conn.execute(
         "SELECT DISTINCT winner_name FROM matches WHERE tour='WTA' "
@@ -468,7 +451,7 @@ def scrape_wta_transcripts():
             if not record:
                 continue
 
-            # Save if player name matches a known WTA player
+            # save if player name matches a known WTA player
             player_lower = (record["player_name"] or "").lower()
             is_wta = any(
                 wn in player_lower or player_lower in wn
@@ -485,7 +468,7 @@ def scrape_wta_transcripts():
     return total_saved
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# main 
 
 def main():
     print("=" * 60)
@@ -493,16 +476,16 @@ def main():
     print("=" * 60)
     print()
 
-    # Step 0: add tour column to existing tables
+    # step 0: add tour column to existing tables
     add_tour_column_if_missing()
 
-    # Step 1: WTA match data
+    # step 1: WTA match data
     match_count = ingest_wta_matches()
 
-    # Step 2: WTA transcripts
+    # step 2: WTA transcripts
     transcript_count = scrape_wta_transcripts()
 
-    # Final summary
+    # final summary
     conn     = get_connection()
     n_atp_m  = conn.execute("SELECT COUNT(*) FROM matches WHERE tour='ATP' OR tour IS NULL").fetchone()[0]
     n_wta_m  = conn.execute("SELECT COUNT(*) FROM matches WHERE tour='WTA'").fetchone()[0]

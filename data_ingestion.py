@@ -1,25 +1,10 @@
-"""
-PART 1 — Data Ingestion  (ATP + WTA)
-=====================================
-Downloads Jeff Sackmann's tennis_atp AND tennis_wta CSVs (match results +
-player info) and loads them into a local SQLite database.
 
-Changes from original:
-  - Added WTA tour ingestion alongside ATP
-  - Extended YEARS to 1990-2024
-  - Added 'minutes' and 'tour' columns to matches table
-  - Fixed ranking download to use per-year files (decade files are 404)
-  - Fixed match_num ordering for CTFI window function compatibility
-
-Usage:
-    python data_ingestion.py
-"""
 
 import os, io, sqlite3, requests
 import pandas as pd
 from tqdm import tqdm
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# config 
 DB_PATH = "tennis_upsets.db"
 
 ATP_BASE = "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master"
@@ -43,7 +28,7 @@ WTA_SLAM_IDS = {
 YEARS = list(range(1990, 2025))
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# helpers 
 
 def fetch_csv(url: str) -> "pd.DataFrame | None":
     try:
@@ -62,7 +47,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-# ── Step 1: Download match data ───────────────────────────────────────────────
+# step 1: Download match data 
 
 def download_matches(years: list, base_url: str, prefix: str, tour: str) -> pd.DataFrame:
     """Download {prefix}_matches_YYYY.csv for each year and concatenate."""
@@ -84,7 +69,7 @@ def download_matches(years: list, base_url: str, prefix: str, tour: str) -> pd.D
     return matches
 
 
-# ── Step 2: Filter Grand Slams and clean ─────────────────────────────────────
+# step 2: Filter Grand Slams and clean 
 
 def filter_grand_slams(matches: pd.DataFrame, slam_ids: dict) -> pd.DataFrame:
     if matches.empty:
@@ -106,7 +91,7 @@ def filter_grand_slams(matches: pd.DataFrame, slam_ids: dict) -> pd.DataFrame:
     slams["upset"] = (slams["winner_rank"] > slams["loser_rank"]).astype(int)
     slams["rank_diff"] = slams["winner_rank"] - slams["loser_rank"]
 
-    # Minutes — coerce to numeric (many older matches have no duration)
+    # minutes - coerce to numeric (many older matches have no duration)
     if "minutes" in slams.columns:
         slams["minutes"] = pd.to_numeric(slams["minutes"], errors="coerce")
     else:
@@ -117,7 +102,7 @@ def filter_grand_slams(matches: pd.DataFrame, slam_ids: dict) -> pd.DataFrame:
         slams["tourney_date"].astype(str), format="%Y%m%d", errors="coerce"
     )
 
-    # Clean slam name
+    # clean slam name
     slams["slam_name"] = (
         slams["tourney_id"].astype(str).str.split("-").str[-1].map(slam_ids)
     )
@@ -129,7 +114,7 @@ def filter_grand_slams(matches: pd.DataFrame, slam_ids: dict) -> pd.DataFrame:
         3 if (slams["tour"] == "WTA").all() else 5
     )
 
-    # Round ordering: assign an ordinal for correct CTFI ordering
+    # round ordering: assign an ordinal for correct CTFI ordering
     round_order = {
         "R128": 1, "R64": 2, "R32": 3, "R16": 4, "QF": 5, "SF": 6, "F": 7,
         "R1": 1, "R2": 2, "R3": 3, "R4": 4,  # older convention
@@ -139,7 +124,7 @@ def filter_grand_slams(matches: pd.DataFrame, slam_ids: dict) -> pd.DataFrame:
     return slams
 
 
-# ── Step 3: Download player info ──────────────────────────────────────────────
+# step 3: Download player info 
 
 def download_players(atp_base: str, wta_base: str) -> pd.DataFrame:
     frames = []
@@ -149,7 +134,7 @@ def download_players(atp_base: str, wta_base: str) -> pd.DataFrame:
         df = fetch_csv(url)
         if df is None:
             continue
-        # Standardise columns (WTA file may have slightly different structure)
+        # standardise columns (WTA file may have slightly different structure)
         if df.shape[1] >= 6:
             df = df.iloc[:, :8]
             df.columns = (
@@ -177,7 +162,7 @@ def download_players(atp_base: str, wta_base: str) -> pd.DataFrame:
     return players
 
 
-# ── Step 4: Write to SQLite ───────────────────────────────────────────────────
+# step 4: Write to SQLite 
 
 def write_to_db(matches: pd.DataFrame, players: pd.DataFrame) -> None:
     conn = get_connection()
@@ -189,7 +174,7 @@ def write_to_db(matches: pd.DataFrame, players: pd.DataFrame) -> None:
         print("Writing players …")
         players.to_sql("players", conn, if_exists="replace", index=False)
 
-    # Covering indexes for CTFI window function, transcript join, etc.
+    # covering indexes for CTFI window function, transcript join, etc.
     for sql in [
         "CREATE INDEX IF NOT EXISTS idx_m_winner   ON matches(winner_id, tourney_id, round_num);",
         "CREATE INDEX IF NOT EXISTS idx_m_loser    ON matches(loser_id,  tourney_id, round_num);",
@@ -205,7 +190,7 @@ def write_to_db(matches: pd.DataFrame, players: pd.DataFrame) -> None:
     print(f"\nDatabase written to: {os.path.abspath(DB_PATH)}")
 
 
-# ── Step 5: Sanity check ──────────────────────────────────────────────────────
+# step 5: Sanity check 
 
 def sanity_check() -> None:
     conn = get_connection()
@@ -232,7 +217,7 @@ def sanity_check() -> None:
     conn.close()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+#  main 
 
 def main() -> None:
     print("=" * 60)
@@ -247,13 +232,13 @@ def main() -> None:
     wta_raw    = download_matches(YEARS, WTA_BASE, "wta", "WTA")
     wta_slams  = filter_grand_slams(wta_raw, WTA_SLAM_IDS) if not wta_raw.empty else pd.DataFrame()
 
-    # Combine
+    # combine
     all_matches = pd.concat(
         [df for df in [atp_slams, wta_slams] if not df.empty], ignore_index=True
     )
     print(f"\nGrand Slam matches found: {len(all_matches):,}")
 
-    # Players
+    # players
     players = download_players(ATP_BASE, WTA_BASE)
 
     write_to_db(all_matches, players)

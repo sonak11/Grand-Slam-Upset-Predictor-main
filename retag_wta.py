@@ -1,18 +1,9 @@
-"""
-retag_wta.py
-=============
-WTA player transcripts are already in your DB from the ATP scraping
-(ASAP Sports mixes both tours on the same pages).
-This script finds them by player name and re-tags them as tour='WTA'.
 
-Run:
-    python3.11 retag_wta.py
-"""
 import sqlite3
 
 DB_PATH = "tennis_upsets.db"
 
-# Known WTA players (top players 2022-2024)
+# known WTA players (top players 2022-2024)
 WTA_PLAYERS = [
     "Iga Swiatek", "Aryna Sabalenka", "Coco Gauff", "Elena Rybakina",
     "Jessica Pegula", "Caroline Wozniacki", "Marketa Vondrousova",
@@ -38,32 +29,32 @@ WTA_PLAYERS = [
 def retag():
     conn = sqlite3.connect(DB_PATH)
 
-    # Add tour column if missing
+    # add tour column if missing
     try:
         conn.execute("ALTER TABLE transcripts ADD COLUMN tour TEXT DEFAULT 'ATP'")
         print("Added tour column to transcripts")
     except Exception:
         pass
 
-    # Check current state
+    # check current state
     total = conn.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0]
     print(f"Total transcripts in DB: {total:,}")
 
-    # Find and retag
+    # find and retag
     retagged = 0
     for player in WTA_PLAYERS:
-        # Match case-insensitively using partial name
+        # match case-insensitively using partial name
         rows = conn.execute(
             "SELECT id, player_name FROM transcripts "
             "WHERE LOWER(player_name) LIKE LOWER(?) AND (tour IS NULL OR tour != 'WTA')",
             (f"%{player.split()[0]}%",)   # match on first name
         ).fetchall()
 
-        # Refine: check last name too
+        # refine: check last name too
         for row_id, name in rows:
             name_l   = (name or "").lower()
             player_l = player.lower()
-            # Match if first+last both appear
+            # match if first+last both appear
             parts = player_l.split()
             if len(parts) >= 2 and parts[-1] in name_l:
                 conn.execute("UPDATE transcripts SET tour='WTA' WHERE id=?", (row_id,))
@@ -71,7 +62,7 @@ def retag():
 
     conn.commit()
 
-    # Summary
+    # summary
     n_wta = conn.execute("SELECT COUNT(*) FROM transcripts WHERE tour='WTA'").fetchone()[0]
     n_atp = conn.execute("SELECT COUNT(*) FROM transcripts WHERE tour='ATP' OR tour IS NULL").fetchone()[0]
 
@@ -79,7 +70,7 @@ def retag():
     print(f"WTA transcripts: {n_wta:,}")
     print(f"ATP transcripts: {n_atp:,}")
 
-    # Show sample WTA players found
+    # show sample WTA players found
     samples = conn.execute(
         "SELECT DISTINCT player_name FROM transcripts WHERE tour='WTA' LIMIT 20"
     ).fetchall()
@@ -95,7 +86,7 @@ def retag():
         print("WTA transcripts may be on a different ASAP category.")
         print("See website limitation note instructions below.")
     else:
-        print(f"\n✅ Done. {n_wta} WTA transcripts now tagged.")
+        print(f"\n Done. {n_wta} WTA transcripts now tagged.")
         print("Re-run: python3.11 features.py && python3.11 model.py")
 
 if __name__ == "__main__":

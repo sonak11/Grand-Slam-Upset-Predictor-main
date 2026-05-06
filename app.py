@@ -1,16 +1,12 @@
-"""
-Grand Slam Upset Predictor — CS 210 Final Project
-Beautiful light theme, interactive features, all pages.
-"""
+
 import streamlit as st
 import os, re, numpy as np
 
 st.set_page_config(page_title="Grand Slam Upset Predictor", page_icon="🎾",
                    layout="wide", initial_sidebar_state="collapsed")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  GLOBAL CSS
-# ═══════════════════════════════════════════════════════════════════════════════
+
+# global css
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,800;1,700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -409,18 +405,17 @@ hr { border-color: #f3f4f6 !important; margin: 1.5rem 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SESSION STATE
-# ═══════════════════════════════════════════════════════════════════════════════
+
+#  session state 
+
 if "page"     not in st.session_state: st.session_state.page = "Home"
 if "messages" not in st.session_state: st.session_state.messages = []
 
 db_ok    = os.path.exists("tennis_upsets.db") and os.path.getsize("tennis_upsets.db") > 10_000
 model_ok = os.path.exists("upset_model.pkl")
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  NAV
-# ═══════════════════════════════════════════════════════════════════════════════
+
 st.markdown('<div class="gs-nav"><div class="gs-logo">Grand Slam Upset Predictor<sup>CS210</sup></div></div>',
             unsafe_allow_html=True)
 
@@ -442,9 +437,9 @@ st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
 page     = st.session_state.page
 groq_key = st.session_state.get("groq_key","")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
+
+#  helpers
+
 ROUND_MAP = {"R1":1,"R2":2,"R3":3,"R4":4,"QF":5,"SF":6,"F":7}
 ROUND_FULL = {"R1":"First Round","R2":"Second Round","R3":"Third Round",
               "R4":"Fourth Round","QF":"Quarterfinal","SF":"Semifinal","F":"Final"}
@@ -497,7 +492,7 @@ def predict(player_rank, opp_rank, ctfi, sentiment, fatigue, round_num, best_of)
                 cc   = prep.transformers_[1][2] if len(prep.transformers_)>1 else []
                 shap_d = {c:float(v) for c,v in zip(list(nc)+list(cc),vals)}
             except Exception: pass
-            # Real model was trained without NLP (join bug) — inject NLP effect manually
+            # Real model was trained without NLP (join bug) - inject NLP effect manually
             if fatigue > 0 or sentiment != 0.0:
                 fat_boost  = np.clip(fatigue * 0.09, 0, 0.35)
                 sent_boost = np.clip(-sentiment * 0.18, -0.15, 0.25)
@@ -507,7 +502,7 @@ def predict(player_rank, opp_rank, ctfi, sentiment, fatigue, round_num, best_of)
             return prob, shap_d
         except Exception: pass
 
-    # ── Deterministic synthetic model (NO random noise) ───────────────────
+    #  Deterministic synthetic model (NO random noise) 
     rank_diff   = player_rank - opp_rank
     rank_effect = np.tanh(rank_diff / 40) * 0.30  # rank gap → ±30%
     ctfi_effect = -ctfi * 0.007
@@ -668,10 +663,10 @@ DEMO_TRANSCRIPTS = [
     # ── Andreeva ─────────────────────────────────────────────────────────────
     {"player":"Mirra Andreeva","tournament":"Roland Garros","round":"QF","upset":1,"rank_diff":22,
      "text":"I'm really struggling with my physical condition. It's been a long clay season and I've played a lot of matches. My legs are very heavy and I've been dealing with some pain in my foot. Mentally I'm also drained after such a tough draw."},
-    # ── Muchova ──────────────────────────────────────────────────────────────
+    #  Muchova 
     {"player":"Karolina Muchova","tournament":"Roland Garros","round":"SF","upset":1,"rank_diff":18,
      "text":"My wrist has been the issue all tournament. I've had injections and treatment every day. There are real doubts about whether I can play through the pain for another match. Mentally it's been very draining to manage this."},
-    # ── Felix AA ─────────────────────────────────────────────────────────────
+    #  Felix AA 
     {"player":"Felix Auger-Aliassime","tournament":"US Open","round":"QF","upset":1,"rank_diff":14,
      "text":"I've been struggling with some back tightness all week. It's been getting progressively worse. I'm not 100 percent and I've needed treatment every day. Mentally it's tough when you're always thinking about whether you'll be able to finish."},
 ]
@@ -792,9 +787,9 @@ def sig_bars(counts, colors):
               f"<span class='sig-val'>{val}</span></div>")
     return out
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PAGE: HOME
-# ═══════════════════════════════════════════════════════════════════════════════
+
+#  page: home
+
 if page == "Home":
     st.markdown("""
     <div class="hero-wrap">
@@ -943,9 +938,9 @@ if page == "Home":
     </div>
     """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PAGE: BLOG
-# ═══════════════════════════════════════════════════════════════════════════════
+
+#  page: blog
+
 elif page == "Blog":
     st.markdown("""
     <div style="padding:2.5rem 0 0">
@@ -1053,9 +1048,9 @@ elif page == "Blog":
     </div>
     """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PAGE: HOW I BUILT THIS
-# ═══════════════════════════════════════════════════════════════════════════════
+
+#  page: how i built this
+
 elif page == "How I Built This":
     st.markdown("""
     <div style="padding:2.5rem 0 0">
@@ -1196,9 +1191,9 @@ elif page == "How I Built This":
             </div>
             """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PAGE: UPSET ALERT
-# ═══════════════════════════════════════════════════════════════════════════════
+
+#  page: upset alert
+
 elif page == "⚡ Upset Alert":
     st.markdown("""
     <div style="padding:2.5rem 0 0.5rem">
@@ -1279,7 +1274,7 @@ elif page == "⚡ Upset Alert":
         txt = st.text_area("Paste transcript",
                            placeholder='"I\'m really tired after yesterday. My legs are heavy and my back is stiff. I\'m not 100% going into tomorrow but I\'ll give everything I have."',
                            height=110, key="alert_txt", label_visibility="collapsed")
-        # Read widget state by key — guaranteed to survive button reruns
+        # read widget state by key-  guaranteed to survive button reruns
         _quick = st.session_state.get("alert_quick", []) or []
         _txt   = st.session_state.get("alert_txt", "") or ""
         full   = " ".join(_quick) + " " + _txt
@@ -1361,9 +1356,9 @@ elif page == "⚡ Upset Alert":
                 st.markdown("<div style='font-size:0.78rem;color:#9ca3af;margin-bottom:0.5rem'>Red = increases upset risk &nbsp;·&nbsp; Blue = decreases it</div>", unsafe_allow_html=True)
                 st.markdown(shap_html(sd), unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PAGE: SCOUTING
-# ═══════════════════════════════════════════════════════════════════════════════
+
+#  page: scouting
+
 elif page == "◎ Scouting":
     st.markdown("""
     <div style="padding:2.5rem 0 0.5rem">
@@ -1495,9 +1490,9 @@ elif page == "◎ Scouting":
                       <div class="snip-text">{s['text'][:500]}</div>
                     </div>""", unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PAGE: ASK THE MODEL
-# ═══════════════════════════════════════════════════════════════════════════════
+
+#  page: ask the mode 
+
 elif page == "◉ Ask the Model":
     st.markdown("""
     <div style="padding:2.5rem 0 0.5rem">

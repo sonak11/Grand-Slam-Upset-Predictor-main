@@ -1,16 +1,3 @@
-"""
-PART 3 — NLP Processing
-
-Applies three layers of text analysis to each transcript:
-
-  1. Rule-based fatigue keyword counting  (fast, always runs)
-  2. Transformer sentiment analysis       (DistilBERT, runs locally)
-  3. Zero-shot LLM fatigue classification (Mistral 7B via Hugging Face Inference API — free tier)
-
-Results are written back to the `transcripts` table as new columns,
-and also exported to a CSV for easy inspection.
-
-"""
 
 import os
 import re
@@ -114,7 +101,7 @@ def compute_sentiment(text: str) -> dict:
 
     nlp = get_sentiment_pipeline()
 
-    # split into ~400-token chunks (rough: 400 words ≈ 500 tokens)
+    # split into abut 400-token chunks (rough: 400 words ≈ 500 tokens)
     words  = text.split()
     chunks = [
         " ".join(words[i : i + 400])
@@ -176,7 +163,7 @@ def get_spacy():
 
 def extract_text_features(text: str) -> dict:
     """
-    Extract higher-level linguistic features:
+    extract higher-level linguistic features:
       - avg sentence length
       - type-token ratio (lexical diversity)
       - first-person pronoun rate  (I, me, my, myself)
@@ -225,8 +212,7 @@ def extract_text_features(text: str) -> dict:
 
 
 # mistral zero-shot labelling 
-#
-# or use Together AI's free tier with the same prompt structure.
+
 
 HF_API_URL = (
     "https://api-inference.huggingface.co/models/"
@@ -238,9 +224,9 @@ You are a sports psychology researcher analysing tennis press conference transcr
 Read the following excerpt and decide whether the player shows signs of physical or mental fatigue.
 
 Transcript excerpt (first 800 words):
----
+
 {excerpt}
----
+
 
 Answer with a JSON object only, no other text. Use this exact format:
 {{"fatigue_label": "FATIGUED" or "NOT_FATIGUED", "confidence": 0.0 to 1.0, "reason": "one sentence"}}
@@ -379,11 +365,11 @@ def process_transcript_row(row: dict, use_llm: bool = False) -> dict:
 
     return {
         "id": row["id"],
-        # Sentiment
+        # sentiment
         "sentiment_label":        sentiment["label"],
         "sentiment_score":        sentiment["score"],
         "sentiment_polarity":     sentiment["polarity"],
-        # Fatigue counts
+        # fatigue counts
         "fatigue_total":          fatigue["fatigue_total"],
         "fatigue_word_density":   fatigue["fatigue_word_density"],
         "fatigue_physical":       fatigue.get("fatigue_physical_fatigue", 0),
@@ -391,7 +377,7 @@ def process_transcript_row(row: dict, use_llm: bool = False) -> dict:
         "fatigue_schedule":       fatigue.get("fatigue_schedule_burden", 0),
         "fatigue_injury":         fatigue.get("fatigue_injury_concern", 0),
         "fatigue_motivation":     fatigue.get("fatigue_motivation_doubt", 0),
-        # Linguistic features
+        # linguistic features
         "avg_sentence_len":       text_feats["avg_sentence_len"],
         "type_token_ratio":       text_feats["type_token_ratio"],
         "first_person_rate":      text_feats["first_person_rate"],

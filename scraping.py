@@ -1,13 +1,4 @@
-"""
-PART 2 — Transcript Scraping
 
-Scrapes Grand Slam press conference transcripts from asapsports.com.
-
-Transcript text is stored in <p> tags on interview pages.
-Day pages list interviews with show_interview.php links.
-
-
-"""
 
 import re
 import time
@@ -217,8 +208,8 @@ def scrape_interview(url, meta):
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # Strategy: collect all <p> tag text — the transcript IS the <p> content
-    # Filter out short navigation paragraphs (< 20 chars)
+    # strategy: collect all <p> tag text — the transcript IS the <p> content
+    # filter out short navigation paragraphs (< 20 chars)
     paragraphs = [
         p.get_text(" ", strip=True)
         for p in soup.find_all("p")
@@ -226,11 +217,11 @@ def scrape_interview(url, meta):
     ]
     raw_text = "\n\n".join(paragraphs)
 
-    # Fallback: if no <p> tags with content, try <td>
+    # fallback: if no <p> tags with content, try <td>
     if len(raw_text) < 200:
         tds = soup.find_all("td")
         if tds:
-            # Skip the nav sidebar (it starts with "Browse by Sport")
+            # skip the nav sidebar (it starts with "Browse by Sport")
             for td in sorted(tds, key=lambda t: len(t.get_text()), reverse=True):
                 td_text = td.get_text("\n", strip=True)
                 if "THE MODERATOR" in td_text or "Press Conference" in td_text:
@@ -386,7 +377,7 @@ def main():
     print(f"  Transcripts saved this run : {total_saved:,}")
     print(f"  Total in database          : {n_total:,}")
     print(f"  Linked to player ID        : {n_linked:,}")
-    print("\n✅  Done. Run nlp.py next.")
+    print("\n  Done. Run nlp.py next.")
 
 
 if __name__ == "__main__":

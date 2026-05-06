@@ -1,21 +1,6 @@
 import os, warnings
 os.environ["PYTHONWARNINGS"] = "ignore::UserWarning"
 warnings.filterwarnings("ignore")
-"""
-PART 4 — Feature Engineering
-==============================
-Builds the final modelling DataFrame:
-  1. Computes CTFI using SQL window functions — minutes-based (sets fallback)
-  2. Engineers rank-based features
-  3. Joins NLP transcript features
-  4. Exports features.csv (includes player_id for clustering)
-
-Changes from original:
-  - CTFI now uses match `minutes` column (sets-based fallback for pre-2000)
-  - player_id included in output for clustering.py
-  - round_num uses pre-computed column from DB (fixed ordering)
-  - NLP imputation uses surface-stratified medians
-"""
 
 import sqlite3, re
 import numpy as np
@@ -31,7 +16,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
-# ── Step 1: Load matches (player-centric) ────────────────────────────────────
+# step 1: Load matches (player-centric) 
 
 def load_matches() -> pd.DataFrame:
     conn = get_connection()
@@ -74,7 +59,7 @@ def load_matches() -> pd.DataFrame:
     return matches
 
 
-# ── Step 2: Parse score ───────────────────────────────────────────────────────
+# step 2: Parse score 
 
 def parse_score(score: str) -> dict:
     if not isinstance(score, str) or not score.strip():
@@ -102,8 +87,7 @@ def enrich_score_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Step 3: CTFI — minutes-based, sets fallback ──────────────────────────────
-#
+# step 3: CTFI — minutes-based, sets fallback 
 #  CTFI(player, tournament, round) = SUM(minutes played in all prior rounds)
 #  Uses actual match duration; falls back to sets_played proxy if minutes=NULL.
 
@@ -168,7 +152,7 @@ def compute_ctfi() -> pd.DataFrame:
     return ctfi
 
 
-# ── Step 4: Rank features ─────────────────────────────────────────────────────
+# step 4: Rank features 
 
 def add_rank_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -182,14 +166,14 @@ def add_rank_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Step 5: Surface encoding ──────────────────────────────────────────────────
+# step 5: Surface encoding 
 
 def encode_surface(df: pd.DataFrame) -> pd.DataFrame:
     surface_dummies = pd.get_dummies(df["surface"], prefix="surface", dtype=int)
     return pd.concat([df, surface_dummies], axis=1)
 
 
-# ── Step 6: NLP merge ─────────────────────────────────────────────────────────
+# step 6: NLP merge 
 
 NLP_COLS = [
     "sentiment_polarity", "fatigue_total", "fatigue_word_density",
@@ -250,7 +234,7 @@ def merge_transcripts(matches: pd.DataFrame, transcripts: pd.DataFrame) -> pd.Da
     merged = matches.merge(trans_agg, on=["player_name", "tourney_name"], how="left",
                            suffixes=("", "_t"))
 
-    # Fallback via slam_name
+    # fallback via slam_name
     if "slam_name" in matches.columns:
         unmatched = merged[available[0]].isna()
         if unmatched.sum() > 0:
@@ -280,20 +264,20 @@ def impute_nlp_surface_median(df: pd.DataFrame) -> pd.DataFrame:
             median_val = df.loc[mask & df[col].notna(), col].median()
             if pd.notna(median_val):
                 df.loc[mask & df[col].isna(), col] = median_val
-    # Global fallback for any remaining
+    # global fallback for any remaining
     for col in available:
         df[col] = df[col].fillna(df[col].median())
     return df
 
 
-# ── Step 7: Final assembly ────────────────────────────────────────────────────
+#  step 7: final assembly 
 
 FEATURE_COLS = [
-    # Identifiers (kept for clustering, dropped from model features)
+    # identifiers (kept for clustering, dropped from model features)
     "player_id", "player_name", "tourney_date", "slam_name",
-    # Match context
+    # match context
     "surface", "round_num", "best_of", "tour",
-    # Rank features
+    # rank features
     "rank", "opp_rank", "rank_ratio", "log_rank_diff", "is_underdog", "rank_bin",
     # CTFI (both variants)
     "ctfi_minutes", "ctfi_sets",
@@ -302,7 +286,7 @@ FEATURE_COLS = [
     "fatigue_physical", "fatigue_mental", "fatigue_schedule",
     "fatigue_injury", "fatigue_motivation",
     "first_person_rate", "negation_rate", "llm_is_fatigued",
-    # Target
+    # target
     "upset",
 ]
 
@@ -312,7 +296,7 @@ def build_final_features(matches, ctfi, transcripts) -> pd.DataFrame:
     df = add_rank_features(df)
     df = encode_surface(df)
 
-    # Merge CTFI (both minutes and sets)
+    # merge CTFI (both minutes and sets)
     df = df.merge(
         ctfi[["player_id", "tourney_id", "match_num", "ctfi_minutes", "ctfi_sets"]],
         on=["player_id", "tourney_id", "match_num"],
@@ -321,13 +305,13 @@ def build_final_features(matches, ctfi, transcripts) -> pd.DataFrame:
     df["ctfi_minutes"] = df["ctfi_minutes"].fillna(0)
     df["ctfi_sets"]    = df["ctfi_sets"].fillna(0)
 
-    # Merge NLP
+    # merge NLP
     df = merge_transcripts(df, transcripts)
 
-    # Surface-stratified NLP imputation
+    # surface-stratified NLP imputation
     df = impute_nlp_surface_median(df)
 
-    # Surface dummies
+    # surface dummies
     surface_dummies = [c for c in df.columns if c.startswith("surface_")]
     keep = [c for c in FEATURE_COLS + surface_dummies if c in df.columns]
     df_features = df[keep].copy()

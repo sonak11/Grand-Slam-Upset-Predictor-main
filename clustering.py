@@ -23,7 +23,7 @@ OUT_PATH     = "player_clusters.csv"
 PLOTS_DIR    = "."
 
 
-# ── Step 1: Build player-level aggregates ────────────────────────────────────
+# step 1: Build player-level aggregates 
 
 def build_player_features() -> pd.DataFrame:
     try:
@@ -40,7 +40,7 @@ def build_player_features() -> pd.DataFrame:
     elif "player_name" in df.columns:
         id_col = "player_name"
     else:
-        # Try joining from DB via positional index (last resort)
+        # try joining from DB via positional index (last resort)
         print("[WARN] No player identifier in features.csv — attempting DB join.")
         try:
             conn = sqlite3.connect(DB_PATH)
@@ -56,7 +56,7 @@ def build_player_features() -> pd.DataFrame:
             print(f"[ERROR] DB join failed: {e}")
             return pd.DataFrame()
 
-    # Surface columns
+    # surface columns
     pct_clay  = df.get("surface_Clay",  pd.Series(0, index=df.index))
     pct_grass = df.get("surface_Grass", pd.Series(0, index=df.index))
     pct_hard  = df.get("surface_Hard",  pd.Series(0, index=df.index))
@@ -72,13 +72,13 @@ def build_player_features() -> pd.DataFrame:
         pct_hard         = ("surface_Hard",  "mean") if "surface_Hard"  in df.columns else ("rank", lambda x: 0),
     ).reset_index()
 
-    # Keep only players with ≥5 matches
+    # keep only players with ≥5 matches
     agg = agg[agg["n_matches"] >= 5].copy()
     print(f"Players with ≥5 matches: {len(agg):,}")
     return agg
 
 
-# ── Step 2: Silhouette-optimal K ─────────────────────────────────────────────
+#step 2: Silhouette-optimal K 
 
 def find_best_k(X_scaled: np.ndarray, k_range=(2, 8)) -> int:
     scores = {}
@@ -95,7 +95,7 @@ def find_best_k(X_scaled: np.ndarray, k_range=(2, 8)) -> int:
     return best_k, scores
 
 
-# ── Step 3: Plots ─────────────────────────────────────────────────────────────
+#  step 3: Plots 
 
 PALETTE = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"]
 
@@ -159,7 +159,7 @@ def plot_cluster_upset_rates(agg_df: pd.DataFrame, path="cluster_upset_rates.png
     print(f"  Saved → {path}")
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+#  main
 
 def main():
     print("=" * 60)
@@ -188,7 +188,7 @@ def main():
     pca  = PCA(n_components=2, random_state=42)
     pca2 = pca.fit_transform(X_scaled)
 
-    # Print summary
+    # print summary
     print("\n── Cluster Summary ───────────────────────────────────────────────")
     print(f"  {'Cluster':>8} {'N':>6} {'Mean Rank':>10} {'Mean CTFI':>12} {'Upset Rate':>12}")
     for _, row in (agg.groupby("cluster").agg(
