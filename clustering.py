@@ -1,31 +1,15 @@
-"""
-PART 6 — Unsupervised Analysis (Player Style Clustering)
-"
-
-Pipeline:
-  1. Build a player feature vector from per-player aggregates
-     (mean rank, surface preference, average sets played, average
-     CTFI absorbed before losing).
-  2. Standard-scale and reduce to 2D via PCA.
-  3. Cluster with k-means (we evaluate k = 2..7 by silhouette score).
-  4. Compute per-cluster upset rate to test whether some archetypes
-     are systematically more upset-prone.
-  5. Visualize: PCA scatter, silhouette curve, per-cluster bar chart.
-
-"""
-
-from __future__ import annotations
+from __future__ import annotations  # must be line 1
+import os, warnings
+os.environ["PYTHONWARNINGS"] = "ignore::UserWarning"
+warnings.filterwarnings("ignore")
 
 import sqlite3
-import warnings
-
 import joblib
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
@@ -33,249 +17,201 @@ from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
-DB_PATH       = "tennis_upsets.db"
-FEATURES_CSV  = "features.csv"
-OUT_PATH      = "player_clusters.csv"
-PLOTS_DIR     = "."
+DB_PATH      = "tennis_upsets.db"
+FEATURES_CSV = "features.csv"
+OUT_PATH     = "player_clusters.csv"
+PLOTS_DIR    = "."
 
 
-# step 1: Build player-level aggregates 
+# ── Step 1: Build player-level aggregates ────────────────────────────────────
 
 def build_player_features() -> pd.DataFrame:
-    """
-    Aggregate the per-match feature matrix into one row per player.
-
-    Player features chosen for clustering:
-      - mean_rank           : average ATP rank across matches
-      - n_matches           : number of matches in the dataset
-      - upset_rate          : empirical upset rate (player's perspective)
-      - mean_ctfi_minutes   : average court time accumulated before
-                              their matches
-      - pct_clay/grass/hard : surface distribution
-      - mean_log_rank_diff  : average rank advantage they faced
-    """
     try:
         df = pd.read_csv(FEATURES_CSV)
     except FileNotFoundError:
         print(f"[ERROR] {FEATURES_CSV} not found. Run features.py first.")
         return pd.DataFrame()
 
-    # pull player_id from the database join - features.csv was anonymised
-    # at the player-match level, so we re-attach it here.
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        joined = pd.read_sql("""
-            SELECT player_id, player_name FROM (
+    ctfi_col = "ctfi_minutes" if "ctfi_minutes" in df.columns else "ctfi"
+
+    # Resolve player identity
+    if "player_id" in df.columns:
+        id_col = "player_id"
+    elif "player_name" in df.columns:
+        id_col = "player_name"
+    else:
+        # Try joining from DB via positional index (last resort)
+        print("[WARN] No player identifier in features.csv — attempting DB join.")
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            db_players = pd.read_sql("""
                 SELECT winner_id AS player_id, winner_name AS player_name FROM matches
                 UNION
-                SELECT loser_id  AS player_id, loser_name  AS player_name FROM matches
-            )
-        """, conn)
-        conn.close()
-    except Exception:
-        joined = pd.DataFrame()
+                SELECT loser_id,  loser_name  FROM matches
+            """, conn)
+            conn.close()
+            df = df.merge(db_players, left_index=True, right_index=True, how="left")
+            id_col = "player_id" if "player_id" in df.columns else "player_name"
+        except Exception as e:
+            print(f"[ERROR] DB join failed: {e}")
+            return pd.DataFrame()
 
-    if "player_id" not in df.columns:
-        # Fall back: if features.csv lost the player_id, cluster by row groups
-        print("[WARN] player_id column not in features.csv — synthesising row-level groups.")
-        df["player_id"] = np.arange(len(df))
+    # Surface columns
+    pct_clay  = df.get("surface_Clay",  pd.Series(0, index=df.index))
+    pct_grass = df.get("surface_Grass", pd.Series(0, index=df.index))
+    pct_hard  = df.get("surface_Hard",  pd.Series(0, index=df.index))
 
-    grp = df.groupby("player_id").agg(
-        mean_rank          = ("rank",          "mean"),
-        n_matches          = ("rank",          "count"),
-        upset_rate         = ("upset",         "mean"),
-        mean_ctfi_minutes  = ("ctfi_minutes",  "mean") if "ctfi_minutes" in df.columns
-                                                         else ("ctfi", "mean"),
-        mean_log_rank_diff = ("log_rank_diff", "mean"),
-        pct_clay           = ("surface_Clay",  "mean") if "surface_Clay"  in df.columns else ("rank", lambda x: 0),
-        pct_grass          = ("surface_Grass", "mean") if "surface_Grass" in df.columns else ("rank", lambda x: 0),
-        pct_hard           = ("surface_Hard",  "mean") if "surface_Hard"  in df.columns else ("rank", lambda x: 0),
+    agg = df.groupby(id_col).agg(
+        mean_rank        = ("rank",     "mean"),
+        n_matches        = ("rank",     "count"),
+        upset_rate       = ("upset",    "mean"),
+        mean_ctfi        = (ctfi_col,   "mean"),
+        mean_log_rank_diff=("log_rank_diff", "mean"),
+        pct_clay         = ("surface_Clay",  "mean") if "surface_Clay"  in df.columns else ("rank", lambda x: 0),
+        pct_grass        = ("surface_Grass", "mean") if "surface_Grass" in df.columns else ("rank", lambda x: 0),
+        pct_hard         = ("surface_Hard",  "mean") if "surface_Hard"  in df.columns else ("rank", lambda x: 0),
     ).reset_index()
 
-    # filter to players with enough matches for stable aggregates
-    grp = grp[grp["n_matches"] >= 5].copy()
-
-    if not joined.empty:
-        grp = grp.merge(joined.drop_duplicates("player_id"),
-                        on="player_id", how="left")
-
-    print(f"Players with ≥5 matches: {len(grp):,}")
-    return grp
+    # Keep only players with ≥5 matches
+    agg = agg[agg["n_matches"] >= 5].copy()
+    print(f"Players with ≥5 matches: {len(agg):,}")
+    return agg
 
 
-#step 2: Standardise & PCA 
+# ── Step 2: Silhouette-optimal K ─────────────────────────────────────────────
 
-CLUSTER_FEATURES = [
-    "mean_rank", "n_matches", "upset_rate",
-    "mean_ctfi_minutes", "mean_log_rank_diff",
-    "pct_clay", "pct_grass", "pct_hard",
-]
-
-
-def reduce_dimensions(df: pd.DataFrame):
-    X = df[CLUSTER_FEATURES].fillna(0).values
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    pca = PCA(n_components=2, random_state=42)
-    X_2d = pca.fit_transform(X_scaled)
-
-    print(f"PCA explained variance: PC1={pca.explained_variance_ratio_[0]:.2%}  "
-          f"PC2={pca.explained_variance_ratio_[1]:.2%}  "
-          f"cumulative={pca.explained_variance_ratio_.sum():.2%}")
-    return X_scaled, X_2d, pca
-
-
-# step 3: Choose k by silhouette 
-
-def choose_k(X_scaled, k_range=range(2, 8)) -> dict:
-    """Try k = 2..7 and pick the k with the highest silhouette score."""
+def find_best_k(X_scaled: np.ndarray, k_range=(2, 8)) -> int:
     scores = {}
-    for k in k_range:
+    for k in range(*k_range):
         km = KMeans(n_clusters=k, random_state=42, n_init=10)
         labels = km.fit_predict(X_scaled)
-        s = silhouette_score(X_scaled, labels)
-        scores[k] = s
-        print(f"  k={k}  silhouette={s:.4f}")
+        if len(np.unique(labels)) < 2:
+            continue
+        scores[k] = silhouette_score(X_scaled, labels)
+    if not scores:
+        return 4
     best_k = max(scores, key=scores.get)
-    print(f"Best k = {best_k}")
-    return {"scores": scores, "best_k": best_k}
+    print(f"Best k = {best_k} (silhouette = {scores[best_k]:.3f})")
+    return best_k, scores
 
 
-# step 4: Final clustering 
+# ── Step 3: Plots ─────────────────────────────────────────────────────────────
 
-def cluster(X_scaled, k: int) -> np.ndarray:
-    km = KMeans(n_clusters=k, random_state=42, n_init=10)
-    labels = km.fit_predict(X_scaled)
-    return labels, km
+PALETTE = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"]
 
 
-# step 5: Plots 
-
-def plot_silhouette_curve(scores: dict) -> None:
-    fig, ax = plt.subplots(figsize=(7, 4))
+def plot_silhouette_curve(scores: dict, best_k: int, path="silhouette_curve.png"):
     ks = sorted(scores.keys())
-    vals = [scores[k] for k in ks]
-    ax.plot(ks, vals, "o-", color="#222", lw=2)
-    best_k = max(scores, key=scores.get)
-    ax.axvline(best_k, color="#888", linestyle="--", lw=1,
-               label=f"best k = {best_k}")
-    ax.set_xlabel("Number of clusters (k)")
-    ax.set_ylabel("Silhouette score")
-    ax.set_title("Choosing k by Silhouette Score")
-    ax.grid(alpha=0.3); ax.legend()
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(ks, [scores[k] for k in ks], "o-", color="#2563eb", lw=2)
+    ax.axvline(best_k, color="#ef4444", ls="--", lw=1.5, label=f"Best k={best_k}")
+    ax.set_xlabel("Number of Clusters (k)")
+    ax.set_ylabel("Silhouette Score")
+    ax.set_title("Silhouette Score vs k (Player Clustering)")
+    ax.legend(); ax.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(f"{PLOTS_DIR}/silhouette_curve.png", dpi=130, bbox_inches="tight")
+    plt.savefig(f"{PLOTS_DIR}/{path}", dpi=150, bbox_inches="tight")
     plt.close()
-    print("  Saved → silhouette_curve.png")
+    print(f"  Saved → {path}")
 
 
-def plot_pca_scatter(X_2d: np.ndarray, labels: np.ndarray,
-                     df: pd.DataFrame) -> None:
-    """PCA scatter coloured by cluster, with per-cluster centroids labelled."""
-    fig, ax = plt.subplots(figsize=(9, 7))
-    k = len(np.unique(labels))
-    # Greyscale palette to stay black-and-white-friendly
-    grays = ["#111", "#444", "#777", "#aaa", "#cccccc"][:k]
-    markers = ["o", "s", "^", "D", "v", "P"][:k]
-
-    for c in range(k):
-        m = labels == c
-        ax.scatter(X_2d[m, 0], X_2d[m, 1],
-                   s=30, c=grays[c], marker=markers[c],
-                   edgecolors="white", linewidth=0.5,
-                   label=f"Cluster {c}  (n={m.sum()})", alpha=0.85)
-        # Centroid
-        ax.scatter(X_2d[m, 0].mean(), X_2d[m, 1].mean(),
-                   s=300, c=grays[c], marker=markers[c],
-                   edgecolors="black", linewidth=2.0)
-
-    ax.set_xlabel("PC 1")
-    ax.set_ylabel("PC 2")
-    ax.set_title(f"Player Archetypes — k-means on PCA-reduced features (k={k})")
-    ax.legend(loc="best", fontsize=9)
-    ax.grid(alpha=0.3)
+def plot_pca_scatter(pca2, labels, agg_df, path="cluster_pca_scatter.png"):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for k in sorted(np.unique(labels)):
+        mask = labels == k
+        ax.scatter(pca2[mask, 0], pca2[mask, 1],
+                   c=PALETTE[k % len(PALETTE)], label=f"Cluster {k}",
+                   alpha=0.65, s=30, edgecolors="none")
+    ax.set_xlabel("PCA Component 1"); ax.set_ylabel("PCA Component 2")
+    ax.set_title("Player Archetypes — PCA Projection")
+    ax.legend(fontsize=9); ax.grid(alpha=0.25)
     plt.tight_layout()
-    plt.savefig(f"{PLOTS_DIR}/cluster_pca_scatter.png", dpi=130, bbox_inches="tight")
+    plt.savefig(f"{PLOTS_DIR}/{path}", dpi=150, bbox_inches="tight")
     plt.close()
-    print("  Saved → cluster_pca_scatter.png")
+    print(f"  Saved → {path}")
 
 
-def plot_cluster_upset_rates(df: pd.DataFrame) -> None:
-    """Per-cluster upset rate bar chart — the substantive finding."""
-    g = (df.groupby("cluster")
-            .agg(rate=("upset_rate", "mean"),
-                 n=("upset_rate", "count"),
-                 mean_rank=("mean_rank", "mean"),
-                 mean_ctfi=("mean_ctfi_minutes", "mean"))
-            .reset_index()
-            .sort_values("rate"))
+def plot_cluster_upset_rates(agg_df: pd.DataFrame, path="cluster_upset_rates.png"):
+    stats = agg_df.groupby("cluster").agg(
+        upset_rate=("upset_rate", "mean"),
+        mean_ctfi=("mean_ctfi", "mean"),
+        mean_rank=("mean_rank", "mean"),
+        n=("upset_rate", "count"),
+    ).reset_index().sort_values("cluster")
 
-    fig, ax = plt.subplots(figsize=(9, 5))
-    grays = ["#222", "#555", "#888", "#aaa", "#cccccc"][:len(g)]
-    bars = ax.bar(g["cluster"].astype(str), g["rate"] * 100,
-                  color=grays, edgecolor="black", linewidth=0.5)
-    for bar, (_, row) in zip(bars, g.iterrows()):
-        ax.text(bar.get_x() + bar.get_width()/2,
-                bar.get_height() + 0.5,
-                f"n={int(row['n'])}\nrank≈{row['mean_rank']:.0f}",
-                ha="center", va="bottom", fontsize=8)
-    ax.set_xlabel("Cluster ID")
-    ax.set_ylabel("Mean upset rate (%)")
-    ax.set_title("Upset Rate by Player Archetype")
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars = ax.bar(
+        [f"Cluster {c}" for c in stats["cluster"]],
+        stats["upset_rate"] * 100,
+        color=[PALETTE[c % len(PALETTE)] for c in stats["cluster"]],
+        edgecolor="none",
+    )
+    for bar, row in zip(bars, stats.itertuples()):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3,
+                f"n={row.n}\nCTFI={row.mean_ctfi:.0f}\nRank={row.mean_rank:.0f}",
+                ha="center", va="bottom", fontsize=8, color="#333")
+    ax.set_ylabel("Upset Rate (%)"); ax.set_ylim(0, max(stats["upset_rate"]) * 120)
+    ax.set_title("Upset Rate by Player Archetype Cluster")
     ax.grid(axis="y", alpha=0.3)
     plt.tight_layout()
-    plt.savefig(f"{PLOTS_DIR}/cluster_upset_rates.png", dpi=130, bbox_inches="tight")
+    plt.savefig(f"{PLOTS_DIR}/{path}", dpi=150, bbox_inches="tight")
     plt.close()
-    print("  Saved → cluster_upset_rates.png")
+    print(f"  Saved → {path}")
 
 
-def describe_clusters(df: pd.DataFrame) -> None:
-    """Print per-cluster summary statistics."""
-    print("\n" + "="*60)
-    print("  PLAYER ARCHETYPE PROFILES")
-    print("="*60)
-    summary = df.groupby("cluster")[CLUSTER_FEATURES + ["upset_rate"]].mean().round(2)
-    print(summary.to_string())
-    print()
+# ── Main ──────────────────────────────────────────────────────────────────────
 
-    # sample 3 representative players per cluster
-    if "player_name" in df.columns:
-        print("\n  Sample players per cluster:")
-        for c, sub in df.groupby("cluster"):
-            sample = sub.sample(min(3, len(sub)), random_state=42)
-            names = sample["player_name"].fillna("(unknown)").tolist()
-            print(f"    Cluster {c}: {', '.join(names)}")
-
-
-# main 
-
-def main() -> None:
+def main():
     print("=" * 60)
     print("  PART 6 — Unsupervised Player Archetype Clustering")
     print("=" * 60)
 
-    df = build_player_features()
-    if df.empty:
+    agg = build_player_features()
+    if agg.empty or len(agg) < 10:
+        print("[WARN] Insufficient data for clustering. Run features.py first.")
         return
 
-    X_scaled, X_2d, pca = reduce_dimensions(df)
+    feature_cols = ["mean_rank", "n_matches", "mean_ctfi",
+                    "mean_log_rank_diff", "pct_clay", "pct_grass", "pct_hard"]
+    feature_cols = [c for c in feature_cols if c in agg.columns]
 
-    print("\nSearching for optimal k …")
-    sweep = choose_k(X_scaled)
-    plot_silhouette_curve(sweep["scores"])
+    X = agg[feature_cols].fillna(agg[feature_cols].median()).values
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-    print(f"\nFinal clustering with k={sweep['best_k']} …")
-    labels, km = cluster(X_scaled, sweep["best_k"])
-    df["cluster"] = labels
+    best_k, sil_scores = find_best_k(X_scaled)
 
-    plot_pca_scatter(X_2d, labels, df)
-    plot_cluster_upset_rates(df)
-    describe_clusters(df)
+    km = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+    agg["cluster"] = km.fit_predict(X_scaled)
 
-    df.to_csv(OUT_PATH, index=False)
-    print(f"\nPlayer cluster assignments → {OUT_PATH}")
-    print("Part 6 complete.")
+    # PCA for visualization
+    pca  = PCA(n_components=2, random_state=42)
+    pca2 = pca.fit_transform(X_scaled)
+
+    # Print summary
+    print("\n── Cluster Summary ───────────────────────────────────────────────")
+    print(f"  {'Cluster':>8} {'N':>6} {'Mean Rank':>10} {'Mean CTFI':>12} {'Upset Rate':>12}")
+    for _, row in (agg.groupby("cluster").agg(
+        n=("upset_rate","count"),
+        mean_rank=("mean_rank","mean"),
+        mean_ctfi=("mean_ctfi","mean"),
+        upset_rate=("upset_rate","mean")
+    ).reset_index().iterrows()):
+        print(f"  {int(row['cluster']):>8} {int(row['n']):>6} {row['mean_rank']:>10.1f} "
+              f"{row['mean_ctfi']:>12.1f} {row['upset_rate']*100:>11.1f}%")
+    print("──────────────────────────────────────────────────────────────────")
+
+    # Save outputs
+    agg.to_csv(OUT_PATH, index=False)
+    print(f"\nClusters saved to: {OUT_PATH}")
+
+    # Plots
+    print("\nGenerating clustering plots …")
+    plot_silhouette_curve(sil_scores, best_k)
+    plot_pca_scatter(pca2, agg["cluster"].values, agg)
+    plot_cluster_upset_rates(agg)
+
+    print("\nPart 6 complete.")
 
 
 if __name__ == "__main__":

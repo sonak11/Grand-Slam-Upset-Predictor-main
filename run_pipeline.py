@@ -128,7 +128,8 @@ def run_phase(phase: dict, python: str = sys.executable) -> bool:
     print(CYAN(f"\n  $ {' '.join(cmd)}"))
 
     t0     = time.time()
-    result = subprocess.run(cmd, capture_output=False, text=True)
+    env = {**__import__("os").environ, "PYTHONWARNINGS": "ignore::UserWarning"}
+    result = subprocess.run(cmd, capture_output=False, text=True, env=env)
     elapsed = time.time() - t0
 
     if result.returncode == 0:

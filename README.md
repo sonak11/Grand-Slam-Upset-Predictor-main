@@ -234,9 +234,3 @@ This opens the interactive dashboard in your browser at `http://localhost:8501`.
 - **CTFI lift**: +0.029 PR-AUC over rank-only, **statistically significant** (McNemar's, p = 0.022)
 - **SHAP**: CTFI-differential ranks **3rd of 27 features**, above round number and player rank
 - **Clustering**: High-ranked high-CTFI players (Cluster 3) have **2.7× the upset rate** of high-ranked rested players (Cluster 0)
-
----
-
-## Academic Integrity
-
-All code is original. External libraries are cited in `requirements.txt`. Data is sourced from publicly licensed datasets (Jeff Sackmann, MIT license) and public web archives (ASAP Sports). Built entirely by a single author.
