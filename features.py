@@ -121,7 +121,7 @@ ctfi_raw AS (
         match_num,
         round_num,
         -- Minutes-based CTFI (gold standard)
-        SUM(match_minutes) OVER (
+        SUM (match_minutes) OVER (
             PARTITION BY player_id, tourney_id
             ORDER BY round_num, match_num
             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
